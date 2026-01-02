@@ -169,12 +169,13 @@ class DartAstParserService {
       print('  Widget: ${w.name} at line ${w.line}, nesting: ${w.nestingLevel}');
     }
 
-    // Sort by line number, then by nesting level (deeper first for same line)
+    // Sort by line number, then by nesting level (shallowest first for same line)
+    // This ensures parents are processed before their children on the same line
     final sortedWidgets = List<_WidgetInfo>.from(widgets)
       ..sort((a, b) {
         final lineCompare = a.line.compareTo(b.line);
         if (lineCompare != 0) return lineCompare;
-        return (b.nestingLevel ?? 0).compareTo(a.nestingLevel ?? 0);
+        return (a.nestingLevel ?? 0).compareTo(b.nestingLevel ?? 0);
       });
 
     final rootNodes = <WidgetTreeNode>[];
@@ -189,8 +190,9 @@ class DartAstParserService {
         final currentNesting = widget.nestingLevel ?? 0;
 
         // Check if current widget is a child of the parent
+        // A child must have a higher nesting level and start at or after parent line
         if (currentNesting > parentNesting &&
-            widget.line > parentInfo.line &&
+            widget.line >= parentInfo.line &&
             (parentInfo.endLine == null || widget.line <= parentInfo.endLine!)) {
           break; // Found valid parent
         } else {

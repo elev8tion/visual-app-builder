@@ -468,11 +468,15 @@ class _PreviewPanelState extends State<PreviewPanel> {
     // If we have an AST widget tree, use the reconstructor
     if (widget.astWidgetTree != null) {
       // Debug: Log widget tree structure
-      print('AST Widget Tree: ${widget.astWidgetTree!.name} with ${widget.astWidgetTree!.children.length} children');
+      debugPrint('AST Widget Tree: ${widget.astWidgetTree!.name} with ${widget.astWidgetTree!.children.length} children');
       _logWidgetTree(widget.astWidgetTree!, 0);
-      return _reconstructor.reconstructWidget(
-        widget.astWidgetTree!,
-        theme: ThemeData.light(),
+      
+      return Container(
+        color: Colors.white, // Default background for screen content
+        child: _reconstructor.reconstructWidget(
+          widget.astWidgetTree!,
+          theme: theme.brightness == Brightness.light ? ThemeData.light() : ThemeData.dark(),
+        ),
       );
     }
 

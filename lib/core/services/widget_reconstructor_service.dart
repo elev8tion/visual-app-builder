@@ -72,6 +72,13 @@ class WidgetReconstructorService {
         return _buildFAB(node, theme);
       case 'ListTile':
         return _buildListTile(node, theme);
+      case 'SafeArea':
+        return _buildSafeArea(node, theme);
+      case 'SingleChildScrollView':
+        return _buildSingleChildScrollView(node, theme);
+      case 'GestureDetector':
+      case 'InkWell':
+        return _buildGestureDetector(node, theme);
       // Wrapper widgets - just pass through to children
       case 'ProviderScope':
       case 'MultiProvider':
@@ -81,8 +88,6 @@ class WidgetReconstructorService {
       case 'Consumer':
       case 'Builder':
       case 'LayoutBuilder':
-      case 'SafeArea':
-      case 'SingleChildScrollView':
         return _buildPassThroughWidget(node, theme);
       default:
         return _buildUnknownWidget(node, theme);
@@ -554,72 +559,105 @@ class WidgetReconstructorService {
     );
   }
 
+  // SafeArea builder
+  Widget _buildSafeArea(WidgetTreeNode node, ThemeData theme) {
+    Widget? child;
+    if (node.children.isNotEmpty) {
+      child = reconstructWidget(node.children.first, theme: theme);
+    }
+    return SafeArea(child: child ?? const SizedBox.shrink());
+  }
+
+  // SingleChildScrollView builder
+  Widget _buildSingleChildScrollView(WidgetTreeNode node, ThemeData theme) {
+    Widget? child;
+    if (node.children.isNotEmpty) {
+      child = reconstructWidget(node.children.first, theme: theme);
+    }
+    return SingleChildScrollView(child: child);
+  }
+
+  // GestureDetector builder
+  Widget _buildGestureDetector(WidgetTreeNode node, ThemeData theme) {
+    Widget? child;
+    if (node.children.isNotEmpty) {
+      child = reconstructWidget(node.children.first, theme: theme);
+    }
+
+    if (node.name == 'InkWell') {
+      return InkWell(onTap: () {}, child: child);
+    }
+    return GestureDetector(onTap: () {}, child: child);
+  }
+
   // Pass-through widget builder - for wrapper widgets like Provider, BlocProvider, etc.
   Widget _buildPassThroughWidget(WidgetTreeNode node, ThemeData theme) {
     if (node.children.isEmpty) {
       return const SizedBox.shrink();
     }
-    if (node.children.length == 1) {
-      return reconstructWidget(node.children.first, theme: theme);
+    // If multiple children, wrap in a Column as a fallback
+    if (node.children.length > 1) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: node.children
+            .map((child) => reconstructWidget(child, theme: theme))
+            .toList(),
+      );
     }
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: node.children.map((child) =>
-        reconstructWidget(child, theme: theme)
-      ).toList(),
-    );
+    return reconstructWidget(node.children.first, theme: theme);
   }
 
   // Unknown widget builder - handles unrecognized widgets gracefully
   Widget _buildUnknownWidget(WidgetTreeNode node, ThemeData theme) {
     // Skip non-visual widgets (system calls, bindings, etc.)
     if (_isNonVisualWidget(node.name)) {
-      // Just render children if any
-      if (node.children.isNotEmpty) {
-        if (node.children.length == 1) {
-          return reconstructWidget(node.children.first, theme: theme);
-        }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: node.children.map((child) =>
-            reconstructWidget(child, theme: theme)
-          ).toList(),
-        );
+      if (node.children.isEmpty) return const SizedBox.shrink();
+      
+      if (node.children.length == 1) {
+        return reconstructWidget(node.children.first, theme: theme);
       }
-      return const SizedBox.shrink();
+      
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: node.children
+            .map((child) => reconstructWidget(child, theme: theme))
+            .toList(),
+      );
     }
 
-    // For actual unknown widgets, show a compact indicator
+    // For actual unknown widgets, show a compact indicator but still render children
     return Container(
-      padding: const EdgeInsets.all(8),
-      margin: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(4),
+      margin: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
         border: Border.all(
-          color: theme.colorScheme.outline.withValues(alpha: 0.3),
-          width: 1,
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+          width: 0.5,
         ),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
                 Icons.widgets_outlined,
-                color: theme.colorScheme.primary,
-                size: 16,
+                color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                size: 10,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               Flexible(
                 child: Text(
                   node.name,
                   style: TextStyle(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 12,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                    fontSize: 10,
                     fontWeight: FontWeight.w500,
                   ),
                   overflow: TextOverflow.ellipsis,
@@ -628,7 +666,7 @@ class WidgetReconstructorService {
             ],
           ),
           if (node.children.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             ...node.children.map((child) =>
               reconstructWidget(child, theme: theme)
             ),
