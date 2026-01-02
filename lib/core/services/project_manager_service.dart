@@ -16,6 +16,7 @@ class ProjectManagerService {
 
   FlutterProject? _currentProject;
   FlutterProject? get currentProject => _currentProject;
+  String? get currentProjectPath => _currentProject?.path;
 
   /// Load a Flutter project from a zip file using file picker
   Future<FlutterProject?> loadProjectFromZip() async {

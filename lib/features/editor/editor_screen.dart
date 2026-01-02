@@ -10,6 +10,7 @@ import 'widgets/preview_panel.dart';
 import 'widgets/code_editor_panel.dart';
 import 'widgets/file_explorer_panel.dart';
 import 'widgets/top_toolbar.dart';
+import 'widgets/source_control_panel.dart';
 
 class EditorScreen extends StatelessWidget {
   const EditorScreen({super.key});
@@ -23,8 +24,15 @@ class EditorScreen extends StatelessWidget {
   }
 }
 
-class _EditorView extends StatelessWidget {
+class _EditorView extends StatefulWidget {
   const _EditorView();
+
+  @override
+  State<_EditorView> createState() => _EditorViewState();
+}
+
+class _EditorViewState extends State<_EditorView> {
+  int _selectedLeftTabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -113,29 +121,108 @@ class _EditorView extends StatelessWidget {
               children: [
                 // Left panel (File Explorer + Widget Tree)
                 if (state.showWidgetTree)
-                  SizedBox(
+                      ],
+                    ),
+                  ),
+
+                if (state.showWidgetTree)
+                  const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
+
+                // Left Panel - Source Control (alternative logic required to switch tabs eventually)
+                // For MVP, we'll put Source Control in the left panel if a new 'showSourceControl' state existed.
+                // But the plan says "Add Source Control tab to the left panel (next to File Explorer)".
+                // Let's implement a simple tab switcher in the Left Panel area.
+                
+                if (state.showWidgetTree) // Re-using this flag for "Left Panel Open" for now
+                   SizedBox(
                     width: 300,
                     child: Column(
                       children: [
-                        Expanded(
-                          flex: 2,
-                          child: FileExplorerPanel(
-                            files: state.files,
-                            currentFile: state.currentFile,
-                            onFileSelect: (file) => bloc.add(SelectProjectFile(file)),
-                            onToggleExpand: (file) => bloc.add(ToggleFileExpand(file)),
-                            onCreateFile: (name, parentPath) => bloc.add(CreateFile(name, parentPath)),
-                            onCreateDirectory: (name, parentPath) => bloc.add(CreateDirectory(name, parentPath)),
+                        // Panel Tabs
+                        Container(
+                          height: 36,
+                          color: const Color(0xFF252535),
+                          child: Row(
+                            children: [
+                               Expanded(
+                                child: InkWell(
+                                  onTap: () => setState(() => _selectedLeftTabIndex = 0),
+                                  child: Container(
+                                    alignment: Alignment.center,
+                                    color: _selectedLeftTabIndex == 0 ? const Color(0xFF3D3D4F) : Colors.transparent,
+                                    child: Text('Files', style: TextStyle(
+                                      color: _selectedLeftTabIndex == 0 ? Colors.white : Colors.white54, 
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    )),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () { 
+                                    setState(() => _selectedLeftTabIndex = 1);
+                                    // Refresh status when switching to Git tab
+                                    bloc.add(const GitCheckStatus()); 
+                                  },
+                                   child: Container(
+                                    alignment: Alignment.center,
+                                    color: _selectedLeftTabIndex == 1 ? const Color(0xFF3D3D4F) : Colors.transparent,
+                                    child: Text('Git', style: TextStyle(
+                                      color: _selectedLeftTabIndex == 1 ? Colors.white : Colors.white54,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    )),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const Divider(height: 1, color: Color(0xFF3D3D4F)),
                         Expanded(
-                          flex: 3,
-                          child: WidgetTreePanel(
-                            widgets: state.widgetTree,
-                            selectedWidget: state.selectedWidget,
-                            onSelect: (widget) => bloc.add(SelectWidget(widget)),
-                            onRefresh: () => bloc.add(const RefreshWidgetTree()),
+                          child: IndexedStack(
+                            index: _selectedLeftTabIndex,
+                            children: [
+                              Column(
+                                children: [
+                                  Expanded(
+                                    flex: 2,
+                                    child: FileExplorerPanel(
+                                      files: state.files,
+                                      currentFile: state.currentFile,
+                                      onFileSelect: (file) => bloc.add(SelectProjectFile(file)),
+                                      onToggleExpand: (file) => bloc.add(ToggleFileExpand(file)),
+                                      onCreateFile: (name, parentPath) => bloc.add(CreateFile(name, parentPath)),
+                                      onCreateDirectory: (name, parentPath) => bloc.add(CreateDirectory(name, parentPath)),
+                                    ),
+                                  ),
+                                  const Divider(height: 1, color: Color(0xFF3D3D4F)),
+                                  Expanded(
+                                    flex: 3,
+                                    child: WidgetTreePanel(
+                                      widgets: state.widgetTree,
+                                      selectedWidget: state.selectedWidget,
+                                      onSelect: (widget) => bloc.add(SelectWidget(widget)),
+                                      onRefresh: () => bloc.add(const RefreshWidgetTree()),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              // Source Control Panel
+                              SourceControlPanel(
+                                gitStatus: state.gitStatus,
+                                isLoading: state.isGitLoading,
+                                onRefresh: () => bloc.add(const GitCheckStatus()),
+                                onStage: (path) => bloc.add(GitStageFile(path)),
+                                onUnstage: (path) => bloc.add(GitUnstageFile(path)),
+                                onCommit: (msg) => bloc.add(GitCommit(msg)),
+                                onPush: () => bloc.add(const GitPush()),
+                                onGenerateMessage: (context) {
+                                  // Trigger AI to generate message (we'll reuse the chat panel for now or add a specific event)
+                                  bloc.add(SendAgentMessage('Generate a git commit message for the current staged changes.'));
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       ],

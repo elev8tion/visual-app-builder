@@ -10,6 +10,7 @@ import '../../core/services/code_sync_service.dart';
 import '../../core/services/project_manager_service.dart';
 import '../../core/services/ai_agent_service.dart';
 import '../../core/services/terminal_service.dart';
+import '../../core/services/git_service.dart';
 
 // Events
 abstract class EditorEvent extends Equatable {
@@ -226,6 +227,29 @@ class _UpdateTerminalOutput extends EditorEvent {
   const _UpdateTerminalOutput(this.output);
 }
 
+class GitCheckStatus extends EditorEvent {
+  const GitCheckStatus();
+}
+
+class GitStageFile extends EditorEvent {
+  final String path;
+  const GitStageFile(this.path);
+}
+
+class GitUnstageFile extends EditorEvent {
+  final String path;
+  const GitUnstageFile(this.path);
+}
+
+class GitCommit extends EditorEvent {
+  final String message;
+  const GitCommit(this.message);
+}
+
+class GitPush extends EditorEvent {
+  const GitPush();
+}
+
 // States
 abstract class EditorState extends Equatable {
   const EditorState();
@@ -286,12 +310,16 @@ class EditorLoaded extends EditorState {
     this.canRedo = false,
     this.isAppRunning = false,
     this.terminalOutput = const [],
+    this.gitStatus,
+    this.isGitLoading = false,
   });
 
   final bool canUndo;
   final bool canRedo;
   final bool isAppRunning;
   final List<String> terminalOutput;
+  final GitStatus? gitStatus;
+  final bool isGitLoading;
 
   EditorLoaded copyWith({
     List<WidgetNode>? widgetTree,
@@ -318,6 +346,8 @@ class EditorLoaded extends EditorState {
     List<String>? terminalOutput,
     bool clearSelectedWidget = false,
     bool clearAstWidget = false,
+    GitStatus? gitStatus,
+    bool? isGitLoading,
   }) {
     return EditorLoaded(
       widgetTree: widgetTree ?? this.widgetTree,
@@ -342,6 +372,8 @@ class EditorLoaded extends EditorState {
       canRedo: canRedo ?? this.canRedo,
       isAppRunning: isAppRunning ?? this.isAppRunning,
       terminalOutput: terminalOutput ?? this.terminalOutput,
+      gitStatus: gitStatus ?? this.gitStatus,
+      isGitLoading: isGitLoading ?? this.isGitLoading,
     );
   }
 
@@ -369,6 +401,8 @@ class EditorLoaded extends EditorState {
         canRedo,
         isAppRunning,
         terminalOutput,
+        gitStatus,
+        isGitLoading,
       ];
 }
 
@@ -386,6 +420,7 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   final ProjectManagerService _projectManager = ProjectManagerService.instance;
   final AIAgentService _aiAgentService = AIAgentService.instance;
   final TerminalService _terminalService = TerminalService.instance;
+  final GitService _gitService = GitService();
   StreamSubscription<WidgetTreeNode?>? _widgetTreeSubscription;
   StreamSubscription<WidgetSelection?>? _widgetSelectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _propertySubscription;
@@ -427,6 +462,12 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<RunProject>(_onRunProject);
     on<HotReload>(_onHotReload);
     on<_UpdateTerminalOutput>(_onUpdateTerminalOutput);
+
+    on<GitCheckStatus>(_onGitCheckStatus);
+    on<GitStageFile>(_onGitStageFile);
+    on<GitUnstageFile>(_onGitUnstageFile);
+    on<GitCommit>(_onGitCommit);
+    on<GitPush>(_onGitPush);
 
     _initSyncManagerListeners();
   }
@@ -997,6 +1038,106 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         emit(currentState.copyWith(files: fileTree));
       } catch (e) {
         debugPrint('Error creating directory: $e');
+      }
+    }
+  }
+
+  // Git Handlers
+  Future<void> _onGitCheckStatus(GitCheckStatus event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(isGitLoading: true));
+      
+      try {
+        // Ensure working directory is set
+        final project = currentState.project;
+        if (project != null) {
+          // Assuming project path is the parent of passed main file or similar
+          // Ideally ProjectManager stores the root path. 
+          // For now, we'll try to use the project path from the project manager if available, 
+          // or assume current directory if we started from there.
+           
+           // In a real app we'd explicitly track project root
+           // For this MVP, let's look at the first file in files list for context
+           if (currentState.files.isNotEmpty) {
+             final rootPath = currentState.files.first.path.split('/').sublist(0, currentState.files.first.path.split('/').length - 1).join('/'); // rough estimation
+             // Better: use the project path passed during load
+              final projectPath = _projectManager.currentProjectPath;
+              if (projectPath != null) {
+                _gitService.setWorkingDirectory(projectPath);
+                
+                // Init if needed (though UI handles this button usually)
+                final isRepo = await _gitService.isGitRepository();
+                if (isRepo) {
+                  final status = await _gitService.getStatus();
+                  emit(currentState.copyWith(
+                    gitStatus: status,
+                    isGitLoading: false,
+                  ));
+                } else {
+                   // Not a repo, maybe we should init? or just show empty
+                   emit(currentState.copyWith(isGitLoading: false));
+                }
+              }
+           }
+        }
+      } catch (e) {
+        debugPrint('Git Check Status Error: $e');
+        emit(currentState.copyWith(isGitLoading: false));
+      }
+    }
+  }
+
+  Future<void> _onGitStageFile(GitStageFile event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      try {
+        await _gitService.stageFile(event.path);
+        // Refresh status
+        add(const GitCheckStatus());
+      } catch (e) {
+        debugPrint('Git Stage Error: $e');
+      }
+    }
+  }
+
+  Future<void> _onGitUnstageFile(GitUnstageFile event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      try {
+        await _gitService.unstageFile(event.path);
+        add(const GitCheckStatus());
+      } catch (e) {
+        debugPrint('Git Unstage Error: $e');
+      }
+    }
+  }
+  
+  Future<void> _onGitCommit(GitCommit event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      try {
+        await _gitService.commit(event.message);
+        add(const GitCheckStatus());
+        add(_UpdateTerminalOutput('Git Commit: ${event.message}\n'));
+      } catch (e) {
+         debugPrint('Git Commit Error: $e');
+         add(_UpdateTerminalOutput('Git Commit Error: $e\n'));
+      }
+    }
+  }
+
+  Future<void> _onGitPush(GitPush event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+       final currentState = state as EditorLoaded;
+       emit(currentState.copyWith(isGitLoading: true));
+       add(_UpdateTerminalOutput('Pushing to remote...\n'));
+      try {
+        await _gitService.push();
+        add(const GitCheckStatus());
+        add(const _UpdateTerminalOutput('Git Push Successful!\n'));
+        emit(currentState.copyWith(isGitLoading: false));
+      } catch (e) {
+        debugPrint('Git Push Error: $e');
+        add(_UpdateTerminalOutput('Git Push Error: $e\n'));
+        emit(currentState.copyWith(isGitLoading: false));
       }
     }
   }

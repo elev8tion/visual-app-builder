@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import '../../../core/models/widget_node.dart';
 import '../../../core/models/widget_selection.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/services/theme_service.dart';
+import 'theme_color_picker.dart';
+import 'padding_editor.dart';
 
 class PropertiesPanel extends StatefulWidget {
   final WidgetNode? selectedWidget;
@@ -484,27 +487,23 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
   }
 
   Widget _buildColorField(String name, Color value) {
+    final themeService = ThemeService();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              _formatPropertyName(name),
-              style: const TextStyle(fontSize: 12, color: Colors.white54),
-            ),
+          Text(
+            _formatPropertyName(name),
+            style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.w500),
           ),
-          InkWell(
-            onTap: () => _showColorPicker(name, value),
-            child: Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: value,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.white24),
-              ),
-            ),
+          const SizedBox(height: 8),
+          ThemeColorPicker(
+            currentColor: value,
+            themeData: themeService.currentTheme,
+            onColorChanged: (color) {
+              widget.onPropertyChange?.call(name, color);
+            },
           ),
         ],
       ),
@@ -512,14 +511,39 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
   }
 
   Widget _buildEdgeInsetsField(String name, dynamic value) {
-    double all = 0;
+    EdgeInsets padding = EdgeInsets.zero;
     if (value is num) {
-      all = value.toDouble();
+      padding = EdgeInsets.all(value.toDouble());
     } else if (value is Map) {
-      all = (value['all'] ?? value['left'] ?? 0).toDouble();
+      padding = EdgeInsets.only(
+        top: (value['top'] ?? value['all'] ?? 0).toDouble(),
+        right: (value['right'] ?? value['all'] ?? 0).toDouble(),
+        bottom: (value['bottom'] ?? value['all'] ?? 0).toDouble(),
+        left: (value['left'] ?? value['all'] ?? 0).toDouble(),
+      );
+    } else if (value is EdgeInsets) {
+      padding = value;
     }
 
-    return _buildNumberField(name, all);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _formatPropertyName(name),
+            style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 8),
+          PaddingEditor(
+            currentPadding: padding,
+            onPaddingChanged: (newPadding) {
+              widget.onPropertyChange?.call(name, newPadding);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildActionsSection() {
