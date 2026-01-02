@@ -130,8 +130,16 @@ class WidgetReconstructorService {
   Widget _buildMaterialApp(WidgetTreeNode node, ThemeData theme) {
     final title = node.properties['title'] as String? ?? 'Flutter App';
 
-    Widget home = Container();
-    if (node.children.isNotEmpty) {
+    Widget? home;
+    for (final child in node.children) {
+      if (child.parameterName == 'home') {
+        home = reconstructWidget(child, theme: theme);
+        break;
+      }
+    }
+
+    // Fallback if no explicit 'home' parameter found
+    if (home == null && node.children.isNotEmpty) {
       home = reconstructWidget(node.children.first, theme: theme);
     }
 
@@ -139,7 +147,7 @@ class WidgetReconstructorService {
       title: title,
       theme: theme,
       debugShowCheckedModeBanner: false,
-      home: home,
+      home: home ?? Container(),
     );
   }
 
@@ -149,29 +157,51 @@ class WidgetReconstructorService {
     Widget? body;
     Widget? floatingActionButton;
     Widget? bottomNavigationBar;
+    Widget? drawer;
 
     for (final child in node.children) {
-      switch (child.name) {
-        case 'AppBar':
+      switch (child.parameterName) {
+        case 'appBar':
           appBar = reconstructWidget(child, theme: theme);
           break;
-        case 'FloatingActionButton':
+        case 'body':
+          body = reconstructWidget(child, theme: theme);
+          break;
+        case 'floatingActionButton':
           floatingActionButton = reconstructWidget(child, theme: theme);
           break;
-        case 'BottomNavigationBar':
+        case 'bottomNavigationBar':
           bottomNavigationBar = reconstructWidget(child, theme: theme);
           break;
+        case 'drawer':
+          drawer = reconstructWidget(child, theme: theme);
+          break;
         default:
-          body = reconstructWidget(child, theme: theme);
+          // Positional child or unrecognized parameter
+          // Fallback logic for legacy/unnamed children
+          if (body == null && !_isKnownScaffoldSlot(child.parameterName)) {
+            body = reconstructWidget(child, theme: theme);
+          }
       }
     }
 
     return Scaffold(
-      appBar: appBar as PreferredSizeWidget?,
+      appBar: appBar is PreferredSizeWidget ? appBar : null,
       body: body ?? Container(),
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
+      drawer: drawer,
     );
+  }
+
+  bool _isKnownScaffoldSlot(String? name) {
+    return name == 'appBar' ||
+        name == 'body' ||
+        name == 'floatingActionButton' ||
+        name == 'bottomNavigationBar' ||
+        name == 'drawer' ||
+        name == 'endDrawer' ||
+        name == 'bottomSheet';
   }
 
   // AppBar builder
@@ -550,12 +580,36 @@ class WidgetReconstructorService {
 
   // ListTile builder
   Widget _buildListTile(WidgetTreeNode node, ThemeData theme) {
-    final title = node.properties['title'] as String? ?? 'Title';
-    final subtitle = node.properties['subtitle'] as String?;
+    final titleText = node.properties['title'] as String?;
+    final subtitleText = node.properties['subtitle'] as String?;
+
+    Widget? leading;
+    Widget? title;
+    Widget? subtitle;
+    Widget? trailing;
+
+    for (final child in node.children) {
+      switch (child.parameterName) {
+        case 'leading':
+          leading = reconstructWidget(child, theme: theme);
+          break;
+        case 'title':
+          title = reconstructWidget(child, theme: theme);
+          break;
+        case 'subtitle':
+          subtitle = reconstructWidget(child, theme: theme);
+          break;
+        case 'trailing':
+          trailing = reconstructWidget(child, theme: theme);
+          break;
+      }
+    }
 
     return ListTile(
-      title: Text(title),
-      subtitle: subtitle != null ? Text(subtitle) : null,
+      leading: leading,
+      title: title ?? (titleText != null ? Text(titleText) : null),
+      subtitle: subtitle ?? (subtitleText != null ? Text(subtitleText) : null),
+      trailing: trailing,
     );
   }
 

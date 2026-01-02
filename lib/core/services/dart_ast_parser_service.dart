@@ -210,6 +210,7 @@ class DartAstParserService {
         properties: widget.properties,
         sourceCode: widget.sourceCode,
         nestingLevel: widget.nestingLevel,
+        parameterName: widget.parameterName,
         children: [], // Will be populated as we find children
       );
 
@@ -249,8 +250,17 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
   final dynamic lineInfo;
   final List<_WidgetInfo> widgets = [];
   int _currentNestingLevel = 0;
+  String? _currentParameterName;
 
   _WidgetExtractorVisitor(this.sourceCode, this.lineInfo);
+
+  @override
+  void visitNamedExpression(NamedExpression node) {
+    final previousParameterName = _currentParameterName;
+    _currentParameterName = node.name.label.name;
+    super.visitNamedExpression(node);
+    _currentParameterName = previousParameterName;
+  }
 
   @override
   void visitInstanceCreationExpression(InstanceCreationExpression node) {
@@ -277,6 +287,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
           endLine: endLine,
           properties: properties,
           nestingLevel: _currentNestingLevel,
+          parameterName: _currentParameterName,
           sourceCode: sourceSnippet,
         );
 
@@ -309,6 +320,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
           endLine: endLine,
           properties: properties,
           nestingLevel: _currentNestingLevel,
+          parameterName: _currentParameterName,
           sourceCode: sourceSnippet,
         ));
       }
@@ -331,6 +343,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
             endLine: endLine,
             properties: properties,
             nestingLevel: _currentNestingLevel,
+            parameterName: _currentParameterName,
             sourceCode: sourceSnippet,
           ));
         }
@@ -425,6 +438,7 @@ class _WidgetInfo {
   final int? endLine;
   final Map<String, dynamic> properties;
   final int? nestingLevel;
+  final String? parameterName;
   final String? sourceCode;
   final List<WidgetTreeNode> childNodes = [];
 
@@ -434,6 +448,7 @@ class _WidgetInfo {
     this.endLine,
     required this.properties,
     this.nestingLevel,
+    this.parameterName,
     this.sourceCode,
   });
 

@@ -157,6 +157,7 @@ class WidgetTreeNode {
   final List<WidgetTreeNode> children;
   final String? sourceCode;
   final int? nestingLevel;
+  final String? parameterName; // e.g. "appBar", "body", "home", "child"
 
   const WidgetTreeNode({
     required this.name,
@@ -167,6 +168,7 @@ class WidgetTreeNode {
     this.children = const [],
     this.sourceCode,
     this.nestingLevel,
+    this.parameterName,
   });
 
   WidgetTreeNode copyWith({
@@ -178,6 +180,7 @@ class WidgetTreeNode {
     List<WidgetTreeNode>? children,
     String? sourceCode,
     int? nestingLevel,
+    String? parameterName,
   }) {
     return WidgetTreeNode(
       name: name ?? this.name,
@@ -188,6 +191,7 @@ class WidgetTreeNode {
       children: children ?? this.children,
       sourceCode: sourceCode ?? this.sourceCode,
       nestingLevel: nestingLevel ?? this.nestingLevel,
+      parameterName: parameterName ?? this.parameterName,
     );
   }
 

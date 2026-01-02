@@ -471,12 +471,21 @@ class _PreviewPanelState extends State<PreviewPanel> {
       debugPrint('AST Widget Tree: ${widget.astWidgetTree!.name} with ${widget.astWidgetTree!.children.length} children');
       _logWidgetTree(widget.astWidgetTree!, 0);
       
-      return Container(
-        color: Colors.white, // Default background for screen content
-        child: _reconstructor.reconstructWidget(
-          widget.astWidgetTree!,
-          theme: theme.brightness == Brightness.light ? ThemeData.light() : ThemeData.dark(),
-        ),
+      final reconstructed = _reconstructor.reconstructWidget(
+        widget.astWidgetTree!,
+        theme: theme.brightness == Brightness.light ? ThemeData.light() : ThemeData.dark(),
+      );
+
+      // If the root widget is already a MaterialApp, return it directly
+      if (widget.astWidgetTree!.name == 'MaterialApp' || widget.astWidgetTree!.name == 'MaterialApp.router') {
+        return reconstructed;
+      }
+
+      // Otherwise, wrap in a MaterialApp to provide required context (Theme, Directionality, MediaQuery)
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: theme.brightness == Brightness.light ? ThemeData.light() : ThemeData.dark(),
+        home: reconstructed,
       );
     }
 
