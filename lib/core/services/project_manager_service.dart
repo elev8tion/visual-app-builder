@@ -205,10 +205,59 @@ class ProjectManagerService {
     return _currentProject?.findFileByPath(filePath)?.content;
   }
 
-  /// Update file content
-  void updateFileContent(String filePath, String content) {
+  /// Update file content in memory and on disk
+  Future<void> saveFile(String filePath, String content) async {
     if (_currentProject != null) {
+      // 1. Update in memory
       _currentProject = _currentProject!.updateFile(filePath, content);
+      
+      // 2. Write to disk
+      final fullPath = path.join(_currentProject!.path, filePath);
+      final file = File(fullPath);
+      await file.writeAsString(content);
+    }
+  }
+
+  /// Create a new file
+  Future<void> createFile(String fileName, String parentPath) async {
+    if (_currentProject != null) {
+      final fullPath = path.join(_currentProject!.path, parentPath, fileName);
+      final file = File(fullPath);
+      
+      if (await file.exists()) {
+        throw Exception('File already exists');
+      }
+      
+      await file.create(recursive: true);
+      
+      // Update project state by reloading or adding manually
+      // For simplicity, we'll reload the project from the updated directory structure
+      // or we could just add it to the list if we want to be faster
+      final relativePath = path.join(parentPath, fileName);
+       _currentProject = _currentProject!.addFile(ProjectFile(
+        path: relativePath,
+        content: '',
+      ));
+    }
+  }
+
+  /// Create a new directory
+  Future<void> createDirectory(String dirName, String parentPath) async {
+    if (_currentProject != null) {
+      final fullPath = path.join(_currentProject!.path, parentPath, dirName);
+      final dir = Directory(fullPath);
+      
+      if (await dir.exists()) {
+        throw Exception('Directory already exists');
+      }
+      
+      await dir.create(recursive: true);
+      
+      // We don't strictly track empty directories in ProjectFile list usually, 
+      // but the getProjectFileTree rebuilds from the file list.
+      // If we want it to show up, we might need to handle it or just rely on 
+      // the file explorer re-scanning.
+      // For now, let's assumes the UI will refresh the file tree.
     }
   }
 

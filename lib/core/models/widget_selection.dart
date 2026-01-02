@@ -324,6 +324,10 @@ class FlutterProject {
     return copyWith(files: updatedFiles);
   }
 
+  FlutterProject addFile(ProjectFile file) {
+    return copyWith(files: [...files, file]);
+  }
+
   FlutterProject copyWith({
     String? name,
     String? path,

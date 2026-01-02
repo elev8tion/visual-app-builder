@@ -7,6 +7,8 @@ class FileExplorerPanel extends StatelessWidget {
   final String? currentFile;
   final Function(FileNode)? onFileSelect;
   final Function(FileNode)? onToggleExpand;
+  final Function(String, String)? onCreateFile;
+  final Function(String, String)? onCreateDirectory;
 
   const FileExplorerPanel({
     super.key,
@@ -14,6 +16,8 @@ class FileExplorerPanel extends StatelessWidget {
     this.currentFile,
     this.onFileSelect,
     this.onToggleExpand,
+    this.onCreateFile,
+    this.onCreateDirectory,
   });
 
   @override
@@ -55,14 +59,14 @@ class FileExplorerPanel extends StatelessWidget {
           const Spacer(),
           IconButton(
             icon: const Icon(Icons.create_new_folder_outlined, size: 18, color: Colors.white54),
-            onPressed: () {},
+            onPressed: () => _showCreateDialog(context, isDirectory: true),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.note_add_outlined, size: 18, color: Colors.white54),
-            onPressed: () {},
+            onPressed: () => _showCreateDialog(context, isDirectory: false),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
@@ -167,5 +171,68 @@ class FileExplorerPanel extends StatelessWidget {
     if (node.name.endsWith('.json')) return const Color(0xFFFFCA28);
     if (node.name.endsWith('.md')) return const Color(0xFF78909C);
     return Colors.white54;
+  }
+
+  Future<void> _showCreateDialog(BuildContext context, {required bool isDirectory}) async {
+    final controller = TextEditingController();
+    final type = isDirectory ? 'Directory' : 'File';
+    
+    // For simplicity, we'll create in root for now, or use currently selected directory if we had that context
+    // Ideally we would want to know the "selected directory" to create inside it.
+    // For now, let's assume root (empty parent path) or maybe 'lib' if it exists.
+    // We'll just pass empty string for parentPath to imply root of project.
+    String parentPath = ''; 
+    
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.customColors['surface'],
+        title: Text('New $type', style: const TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Enter name',
+            hintStyle: const TextStyle(color: Colors.white38),
+            enabledBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: Colors.white24),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: AppTheme.primaryColor),
+            ),
+          ),
+          autofocus: true,
+          onSubmitted: (_) {
+            if (controller.text.isNotEmpty) {
+               Navigator.of(context).pop();
+               if (isDirectory) {
+                 onCreateDirectory?.call(controller.text, parentPath);
+               } else {
+                 onCreateFile?.call(controller.text, parentPath);
+               }
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () {
+               if (controller.text.isNotEmpty) {
+                 Navigator.of(context).pop();
+                 if (isDirectory) {
+                   onCreateDirectory?.call(controller.text, parentPath);
+                 } else {
+                   onCreateFile?.call(controller.text, parentPath);
+                 }
+               }
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
   }
 }

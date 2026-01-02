@@ -5,8 +5,11 @@ import 'package:equatable/equatable.dart';
 import '../../core/models/widget_node.dart';
 import '../../core/models/widget_selection.dart';
 import '../../core/services/bidirectional_sync_manager.dart';
+
 import '../../core/services/code_sync_service.dart';
 import '../../core/services/project_manager_service.dart';
+import '../../core/services/ai_agent_service.dart';
+import '../../core/services/terminal_service.dart';
 
 // Events
 abstract class EditorEvent extends Equatable {
@@ -146,6 +149,28 @@ class ToggleFileExpand extends EditorEvent {
   List<Object?> get props => [file];
 }
 
+class SaveFile extends EditorEvent {
+  const SaveFile();
+}
+
+class CreateFile extends EditorEvent {
+  final String fileName;
+  final String parentPath;
+  const CreateFile(this.fileName, this.parentPath);
+
+  @override
+  List<Object?> get props => [fileName, parentPath];
+}
+
+class CreateDirectory extends EditorEvent {
+  final String dirName;
+  final String parentPath;
+  const CreateDirectory(this.dirName, this.parentPath);
+
+  @override
+  List<Object?> get props => [dirName, parentPath];
+}
+
 // Internal events for sync manager updates
 class _UpdateWidgetTreeInternal extends EditorEvent {
   final WidgetTreeNode? astTree;
@@ -166,6 +191,39 @@ class _UpdatePropertiesInternal extends EditorEvent {
 class _UpdateCodeInternal extends EditorEvent {
   final String code;
   const _UpdateCodeInternal(this.code);
+}
+
+class Undo extends EditorEvent {
+  const Undo();
+}
+
+class Redo extends EditorEvent {
+  const Redo();
+}
+
+class _UpdateCanUndoRedoInternal extends EditorEvent {
+  final bool canUndo;
+  final bool canRedo;
+  const _UpdateCanUndoRedoInternal(this.canUndo, this.canRedo);
+}
+
+class _UpdateAiMessageChunk extends EditorEvent {
+  final String messageId;
+  final String chunk;
+  const _UpdateAiMessageChunk(this.messageId, this.chunk);
+}
+
+class RunProject extends EditorEvent {
+  const RunProject();
+}
+
+class HotReload extends EditorEvent {
+  const HotReload();
+}
+
+class _UpdateTerminalOutput extends EditorEvent {
+  final String output;
+  const _UpdateTerminalOutput(this.output);
 }
 
 // States
@@ -223,7 +281,17 @@ class EditorLoaded extends EditorState {
     this.projectName,
     this.project,
     this.isLoadingProject = false,
+
+    this.canUndo = false,
+    this.canRedo = false,
+    this.isAppRunning = false,
+    this.terminalOutput = const [],
   });
+
+  final bool canUndo;
+  final bool canRedo;
+  final bool isAppRunning;
+  final List<String> terminalOutput;
 
   EditorLoaded copyWith({
     List<WidgetNode>? widgetTree,
@@ -244,6 +312,10 @@ class EditorLoaded extends EditorState {
     String? projectName,
     FlutterProject? project,
     bool? isLoadingProject,
+    bool? canUndo,
+    bool? canRedo,
+    bool? isAppRunning,
+    List<String>? terminalOutput,
     bool clearSelectedWidget = false,
     bool clearAstWidget = false,
   }) {
@@ -266,6 +338,10 @@ class EditorLoaded extends EditorState {
       projectName: projectName ?? this.projectName,
       project: project ?? this.project,
       isLoadingProject: isLoadingProject ?? this.isLoadingProject,
+      canUndo: canUndo ?? this.canUndo,
+      canRedo: canRedo ?? this.canRedo,
+      isAppRunning: isAppRunning ?? this.isAppRunning,
+      terminalOutput: terminalOutput ?? this.terminalOutput,
     );
   }
 
@@ -289,6 +365,10 @@ class EditorLoaded extends EditorState {
         projectName,
         project,
         isLoadingProject,
+        canUndo,
+        canRedo,
+        isAppRunning,
+        terminalOutput,
       ];
 }
 
@@ -304,10 +384,13 @@ class EditorError extends EditorState {
 class EditorBloc extends Bloc<EditorEvent, EditorState> {
   final BidirectionalSyncManager _syncManager = BidirectionalSyncManager.instance;
   final ProjectManagerService _projectManager = ProjectManagerService.instance;
+  final AIAgentService _aiAgentService = AIAgentService.instance;
+  final TerminalService _terminalService = TerminalService.instance;
   StreamSubscription<WidgetTreeNode?>? _widgetTreeSubscription;
   StreamSubscription<WidgetSelection?>? _widgetSelectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _propertySubscription;
   StreamSubscription<String>? _codeSubscription;
+  StreamSubscription<SyncEvent>? _syncEventSubscription;
 
   EditorBloc() : super(const EditorInitial()) {
     on<LoadProject>(_onLoadProject);
@@ -328,10 +411,22 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<LoadProjectFromDirectory>(_onLoadProjectFromDirectory);
     on<SelectProjectFile>(_onSelectProjectFile);
     on<ToggleFileExpand>(_onToggleFileExpand);
+    on<SaveFile>(_onSaveFile);
+    on<CreateFile>(_onCreateFile);
+    on<CreateDirectory>(_onCreateDirectory);
     on<_UpdateWidgetTreeInternal>(_onUpdateWidgetTreeInternal);
     on<_UpdateSelectionInternal>(_onUpdateSelectionInternal);
+
     on<_UpdatePropertiesInternal>(_onUpdatePropertiesInternal);
     on<_UpdateCodeInternal>(_onUpdateCodeInternal);
+    on<Undo>(_onUndo);
+    on<Redo>(_onRedo);
+    on<_UpdateCanUndoRedoInternal>(_onUpdateCanUndoRedoInternal);
+
+    on<_UpdateAiMessageChunk>(_onUpdateAiMessageChunk);
+    on<RunProject>(_onRunProject);
+    on<HotReload>(_onHotReload);
+    on<_UpdateTerminalOutput>(_onUpdateTerminalOutput);
 
     _initSyncManagerListeners();
   }
@@ -362,7 +457,17 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         add(_UpdateCodeInternal(code));
       }
     });
+
+    _syncEventSubscription = _syncManager.syncEventsStream.listen((event) {
+      if (state is EditorLoaded) {
+        add(_UpdateCanUndoRedoInternal(
+          _syncManager.canUndo,
+          _syncManager.canRedo,
+        ));
+      }
+    });
   }
+
 
   /// Convert AST WidgetTreeNode to UI WidgetNode
   List<WidgetNode> _convertAstToWidgetNodes(WidgetTreeNode astNode, [String? parentId]) {
@@ -390,6 +495,7 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     _widgetSelectionSubscription?.cancel();
     _propertySubscription?.cancel();
     _codeSubscription?.cancel();
+    _syncEventSubscription?.cancel();
     return super.close();
   }
 
@@ -472,16 +578,85 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         chatMessages: [...currentState.chatMessages, userMessage],
       ));
 
-      // TODO: Integrate with actual AI agent
+      final aiMessageId = (DateTime.now().millisecondsSinceEpoch + 1).toString();
       final aiMessage = ChatMessage(
-        id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
-        content: 'AI agent integration pending. Message received: "${event.message}"',
+        id: aiMessageId,
+        content: '', // Start empty
         isUser: false,
         timestamp: DateTime.now(),
       );
 
-      emit((state as EditorLoaded).copyWith(
-        chatMessages: [...(state as EditorLoaded).chatMessages, aiMessage],
+      // Add empty AI message
+      emit(currentState.copyWith(
+        chatMessages: [...currentState.chatMessages, userMessage, aiMessage],
+      ));
+
+      // Create context
+      final context = EditorContext(
+        currentFile: currentState.currentFile,
+        currentCode: currentState.currentFileContent,
+        selectedWidget: currentState.selectedWidget,
+        selectedAstWidget: currentState.selectedAstWidget,
+      );
+
+      // Listen to stream
+      await for (final chunk in _aiAgentService.sendMessage(event.message, context: context)) {
+        add(_UpdateAiMessageChunk(aiMessageId, chunk));
+      }
+    }
+  }
+
+  void _onUpdateAiMessageChunk(
+    _UpdateAiMessageChunk event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      final updatedMessages = currentState.chatMessages.map((msg) {
+        if (msg.id == event.messageId) {
+          return ChatMessage(
+            id: msg.id,
+            content: msg.content + event.chunk,
+            isUser: msg.isUser,
+            timestamp: msg.timestamp,
+            attachments: msg.attachments,
+          );
+        }
+        return msg;
+      }).toList();
+
+      emit(currentState.copyWith(chatMessages: updatedMessages));
+    }
+  }
+
+  Future<void> _onRunProject(RunProject event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(
+        isAppRunning: true,
+        terminalOutput: ['> flutter run -d macos\n'],
+      ));
+
+      await for (final output in _terminalService.runProject()) {
+        add(_UpdateTerminalOutput(output));
+      }
+    }
+  }
+
+  Future<void> _onHotReload(HotReload event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      // Don't clear logs, just append
+      await for (final output in _terminalService.hotReload()) {
+        add(_UpdateTerminalOutput(output));
+      }
+    }
+  }
+
+  void _onUpdateTerminalOutput(_UpdateTerminalOutput event, Emitter<EditorState> emit) {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(
+        terminalOutput: [...currentState.terminalOutput, event.output],
       ));
     }
   }
@@ -758,6 +933,72 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
       }
       return node;
     }).toList();
+  }
+
+  Future<void> _onSaveFile(SaveFile event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      if (currentState.currentFile != null && currentState.currentFileContent != null) {
+        try {
+          await _projectManager.saveFile(
+            currentState.currentFile!,
+            currentState.currentFileContent!,
+          );
+          emit(currentState.copyWith(isDirty: false));
+        } catch (e) {
+          debugPrint('Error saving file: $e');
+        }
+      }
+    }
+  }
+
+  Future<void> _onUndo(Undo event, Emitter<EditorState> emit) async {
+    await _syncManager.undo();
+  }
+
+  Future<void> _onRedo(Redo event, Emitter<EditorState> emit) async {
+    await _syncManager.redo();
+  }
+
+  void _onUpdateCanUndoRedoInternal(
+    _UpdateCanUndoRedoInternal event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(
+        canUndo: event.canUndo,
+        canRedo: event.canRedo,
+      ));
+    }
+  }
+
+
+  Future<void> _onCreateFile(CreateFile event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      try {
+        await _projectManager.createFile(event.fileName, event.parentPath);
+        // Refresh file tree
+        final fileTree = _projectManager.getProjectFileTree();
+        emit(currentState.copyWith(files: fileTree));
+      } catch (e) {
+         debugPrint('Error creating file: $e');
+      }
+    }
+  }
+
+  Future<void> _onCreateDirectory(CreateDirectory event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      try {
+        await _projectManager.createDirectory(event.dirName, event.parentPath);
+        // Refresh file tree
+        final fileTree = _projectManager.getProjectFileTree();
+        emit(currentState.copyWith(files: fileTree));
+      } catch (e) {
+        debugPrint('Error creating directory: $e');
+      }
+    }
   }
 
   void _debugPrintTree(WidgetTreeNode node, int depth) {

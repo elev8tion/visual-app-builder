@@ -15,6 +15,14 @@ class TopToolbar extends StatelessWidget {
   final VoidCallback? onToggleInspect;
   final VoidCallback? onLoadZip;
   final VoidCallback? onLoadFolder;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final VoidCallback? onRun;
+  final VoidCallback? onHotReload;
+  final bool canUndo;
+  final bool canRedo;
+  final bool isDirty;
+  final bool isAppRunning;
 
   const TopToolbar({
     super.key,
@@ -30,6 +38,15 @@ class TopToolbar extends StatelessWidget {
     this.onToggleInspect,
     this.onLoadZip,
     this.onLoadFolder,
+    this.onUndo,
+
+    this.onRedo,
+    this.onRun,
+    this.onHotReload,
+    this.canUndo = false,
+    this.canRedo = false,
+    this.isDirty = false,
+    this.isAppRunning = false,
   });
 
   @override
@@ -60,7 +77,7 @@ class TopToolbar extends StatelessWidget {
               if (!isVeryCompact) ...[
                 const SizedBox(width: 8),
                 Text(
-                  projectName ?? 'Visual Builder',
+                  (projectName ?? 'Visual Builder') + (isDirty ? '*' : ''),
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -76,6 +93,10 @@ class TopToolbar extends StatelessWidget {
 
               // View mode tabs
               _buildViewModeTabs(isCompact),
+              const SizedBox(width: 12),
+
+              // Undo/Redo
+              _buildUndoRedoButtons(),
 
               const Spacer(),
 
@@ -110,15 +131,19 @@ class TopToolbar extends StatelessWidget {
 
               // Actions
               _buildActionButton(
-                icon: Icons.play_arrow,
-                label: isVeryCompact ? null : 'Run',
-                isPrimary: true,
+                icon: isAppRunning ? Icons.stop : Icons.play_arrow,
+                label: isAppRunning ? 'Stop' : (isVeryCompact ? null : 'Run'),
+                isPrimary: !isAppRunning,
+                onTap: onRun,
+                color: isAppRunning ? Colors.red : null,
               ),
-              if (!isVeryCompact) ...[
+              if (isAppRunning) ...[
                 const SizedBox(width: 6),
                 _buildActionButton(
-                  icon: Icons.cloud_upload_outlined,
-                  label: null,
+                  icon: Icons.bolt,
+                  label: isVeryCompact ? null : 'Hot Reload',
+                  onTap: onHotReload,
+                  color: Colors.amber,
                 ),
               ],
             ],
@@ -250,26 +275,32 @@ class TopToolbar extends StatelessWidget {
     required IconData icon,
     String? label,
     bool isPrimary = false,
+    VoidCallback? onTap,
+    Color? color,
   }) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: label != null ? 10 : 8, vertical: 6),
-      decoration: BoxDecoration(
-        gradient: isPrimary ? AppTheme.primaryGradient : null,
-        color: isPrimary ? null : AppTheme.customColors['surface'],
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: Colors.white),
-          if (label != null) ...[
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 11, color: Colors.white),
-            ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: label != null ? 10 : 8, vertical: 6),
+        decoration: BoxDecoration(
+          gradient: isPrimary ? AppTheme.primaryGradient : null,
+          color: isPrimary ? null : AppTheme.customColors['surface'],
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color ?? Colors.white),
+            if (label != null) ...[
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 11, color: Colors.white),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -360,6 +391,55 @@ class TopToolbar extends StatelessWidget {
             const SizedBox(width: 4),
             const Icon(Icons.arrow_drop_down, size: 14, color: Colors.white54),
           ],
+        ),
+      ),
+    );
+
+  }
+
+  Widget _buildUndoRedoButtons() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.customColors['surface'],
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildUndoRedoButton(
+            icon: Icons.undo,
+            onTap: canUndo ? onUndo : null,
+            tooltip: 'Undo (Cmd+Z)',
+          ),
+          Container(width: 1, height: 16, color: const Color(0xFF3D3D4F)),
+          _buildUndoRedoButton(
+            icon: Icons.redo,
+            onTap: canRedo ? onRedo : null,
+            tooltip: 'Redo (Cmd+Shift+Z)',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUndoRedoButton({
+    required IconData icon,
+    VoidCallback? onTap,
+    required String tooltip,
+  }) {
+    final isEnabled = onTap != null;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            icon,
+            size: 16,
+            color: isEnabled ? Colors.white70 : Colors.white24,
+          ),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
 import 'package:highlight/languages/dart.dart';
@@ -9,12 +10,22 @@ class CodeEditorPanel extends StatefulWidget {
   final String? code;
   final String? fileName;
   final Function(String)? onCodeChange;
+  final VoidCallback? onSave;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final bool canUndo;
+  final bool canRedo;
 
   const CodeEditorPanel({
     super.key,
     this.code,
     this.fileName,
     this.onCodeChange,
+    this.onSave,
+    this.onUndo,
+    this.onRedo,
+    this.canUndo = false,
+    this.canRedo = false,
   });
 
   @override
@@ -94,9 +105,15 @@ class _CodeEditorPanelState extends State<CodeEditorPanel> {
             ),
           ),
           const Spacer(),
-          _buildToolButton(icon: Icons.undo, onTap: () {}),
+          _buildToolButton(
+            icon: Icons.undo,
+            onTap: widget.canUndo ? widget.onUndo : null,
+          ),
           const SizedBox(width: 8),
-          _buildToolButton(icon: Icons.redo, onTap: () {}),
+          _buildToolButton(
+            icon: Icons.redo,
+            onTap: widget.canRedo ? widget.onRedo : null,
+          ),
           const SizedBox(width: 16),
           _buildToolButton(icon: Icons.format_align_left, onTap: () {}),
           const SizedBox(width: 8),
@@ -105,7 +122,7 @@ class _CodeEditorPanelState extends State<CodeEditorPanel> {
           _buildActionButton(
             icon: Icons.save,
             label: 'Save',
-            onTap: () {},
+            onTap: widget.onSave,
           ),
         ],
       ),
@@ -113,12 +130,13 @@ class _CodeEditorPanelState extends State<CodeEditorPanel> {
   }
 
   Widget _buildToolButton({required IconData icon, VoidCallback? onTap}) {
+    final isEnabled = onTap != null;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(4),
       child: Padding(
         padding: const EdgeInsets.all(6),
-        child: Icon(icon, size: 18, color: Colors.white54),
+        child: Icon(icon, size: 18, color: isEnabled ? Colors.white54 : Colors.white24),
       ),
     );
   }
@@ -155,21 +173,35 @@ class _CodeEditorPanelState extends State<CodeEditorPanel> {
   Widget _buildEditor() {
     return Container(
       color: const Color(0xFF1E1E1E),
-      child: CodeTheme(
-        data: CodeThemeData(styles: monokaiSublimeTheme),
-        child: SingleChildScrollView(
-          child: CodeField(
-            controller: _codeController,
-            textStyle: const TextStyle(
-              fontFamily: 'JetBrains Mono',
-              fontSize: 14,
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () {
+            widget.onSave?.call();
+          },
+          // Also support Ctrl+S for Windows/Linux
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): () {
+            widget.onSave?.call();
+          },
+        },
+        child: Focus(
+          autofocus: true,
+          child: CodeTheme(
+            data: CodeThemeData(styles: monokaiSublimeTheme),
+            child: SingleChildScrollView(
+              child: CodeField(
+                controller: _codeController,
+                textStyle: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 14,
+                ),
+                onChanged: (code) {
+                  if (_debounce?.isActive ?? false) _debounce!.cancel();
+                  _debounce = Timer(const Duration(milliseconds: 600), () {
+                    widget.onCodeChange?.call(code);
+                  });
+                },
+              ),
             ),
-            onChanged: (code) {
-              if (_debounce?.isActive ?? false) _debounce!.cancel();
-              _debounce = Timer(const Duration(milliseconds: 600), () {
-                widget.onCodeChange?.call(code);
-              });
-            },
           ),
         ),
       ),

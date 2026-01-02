@@ -97,7 +97,14 @@ class _EditorView extends StatelessWidget {
             onTogglePanel: (panel) => bloc.add(TogglePanel(panel)),
             onToggleInspect: () => bloc.add(const ToggleInspectMode()),
             onLoadZip: () => bloc.add(const LoadProjectFromZip()),
+
             onLoadFolder: () => bloc.add(const LoadProjectFromDirectory()),
+            onRun: () => bloc.add(const RunProject()),
+            onHotReload: () => bloc.add(const HotReload()),
+            canUndo: state.canUndo,
+            canRedo: state.canRedo,
+            isDirty: state.isDirty,
+            isAppRunning: state.isAppRunning,
           ),
 
           // Main content area
@@ -117,6 +124,8 @@ class _EditorView extends StatelessWidget {
                             currentFile: state.currentFile,
                             onFileSelect: (file) => bloc.add(SelectProjectFile(file)),
                             onToggleExpand: (file) => bloc.add(ToggleFileExpand(file)),
+                            onCreateFile: (name, parentPath) => bloc.add(CreateFile(name, parentPath)),
+                            onCreateDirectory: (name, parentPath) => bloc.add(CreateDirectory(name, parentPath)),
                           ),
                         ),
                         const Divider(height: 1, color: Color(0xFF3D3D4F)),
@@ -188,6 +197,69 @@ class _EditorView extends StatelessWidget {
           ),
         ],
       ),
+          // Terminal Panel
+          if (state.terminalOutput.isNotEmpty || state.isAppRunning)
+            Container(
+              height: 200,
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Color(0xFF3D3D4F))),
+                color: Color(0xFF1E1E2E), // Darker background for terminal
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Terminal Header
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    color: const Color(0xFF252535),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.terminal, size: 16, color: Colors.white70),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Terminal',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Spacer(),
+                        if (state.isAppRunning)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.green.withOpacity(0.5)),
+                            ),
+                            child: const Text('Running', style: TextStyle(fontSize: 10, color: Colors.green)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // Terminal Output
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: state.terminalOutput.length,
+                      itemBuilder: (context, index) {
+                        return Text(
+                          state.terminalOutput[index],
+                          style: const TextStyle(
+                            fontFamily: 'Courier',
+                            fontSize: 12,
+                            color: Colors.white70,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -206,6 +278,12 @@ class _EditorView extends StatelessWidget {
           code: state.currentFileContent,
           fileName: state.currentFile,
           onCodeChange: (code) => bloc.add(UpdateCode(code)),
+
+          onSave: () => bloc.add(const SaveFile()),
+          onUndo: () => bloc.add(const Undo()),
+          onRedo: () => bloc.add(const Redo()),
+          canUndo: state.canUndo,
+          canRedo: state.canRedo,
         );
       case ViewMode.split:
         return Row(
@@ -225,6 +303,12 @@ class _EditorView extends StatelessWidget {
                 code: state.currentFileContent,
                 fileName: state.currentFile,
                 onCodeChange: (code) => bloc.add(UpdateCode(code)),
+
+                onSave: () => bloc.add(const SaveFile()),
+                onUndo: () => bloc.add(const Undo()),
+                onRedo: () => bloc.add(const Redo()),
+                canUndo: state.canUndo,
+                canRedo: state.canRedo,
               ),
             ),
           ],
