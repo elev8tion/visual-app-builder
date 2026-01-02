@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_code_editor/flutter_code_editor.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
@@ -22,6 +23,7 @@ class CodeEditorPanel extends StatefulWidget {
 
 class _CodeEditorPanelState extends State<CodeEditorPanel> {
   late CodeController _codeController;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -36,51 +38,23 @@ class _CodeEditorPanelState extends State<CodeEditorPanel> {
   void didUpdateWidget(CodeEditorPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.code != oldWidget.code && widget.code != null) {
-      _codeController.text = widget.code!;
+      // Only update if the new code is significantly different to avoid cursor jumps
+      // or check if we are currently editing (might need a flag)
+      // For now, straightforward update, but checking equality
+      if (_codeController.text != widget.code) {
+         _codeController.text = widget.code!;
+      }
     }
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _codeController.dispose();
     super.dispose();
   }
 
-  static const String _defaultCode = '''
-import 'package:flutter/material.dart';
-
-class MyWidget extends StatelessWidget {
-  const MyWidget({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My App'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text(
-              'Hello World',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () {},
-              child: const Text('Click Me'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-''';
+  static const String _defaultCode = '// Open a project to view code';
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +164,12 @@ class MyWidget extends StatelessWidget {
               fontFamily: 'JetBrains Mono',
               fontSize: 14,
             ),
-            onChanged: (code) => widget.onCodeChange?.call(code),
+            onChanged: (code) {
+              if (_debounce?.isActive ?? false) _debounce!.cancel();
+              _debounce = Timer(const Duration(milliseconds: 600), () {
+                widget.onCodeChange?.call(code);
+              });
+            },
           ),
         ),
       ),

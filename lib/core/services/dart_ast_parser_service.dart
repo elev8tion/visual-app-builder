@@ -164,6 +164,12 @@ class DartAstParserService {
   List<WidgetTreeNode> _buildWidgetHierarchy(List<_WidgetInfo> widgets) {
     if (widgets.isEmpty) return [];
 
+    print('Building hierarchy from ${widgets.length} widgets');
+    for (final w in widgets) {
+      print('  Widget: ${w.name} at line ${w.line}, nesting: ${w.nestingLevel}');
+    }
+
+    // Sort by line number, then by nesting level (deeper first for same line)
     final sortedWidgets = List<_WidgetInfo>.from(widgets)
       ..sort((a, b) {
         final lineCompare = a.line.compareTo(b.line);
@@ -171,10 +177,29 @@ class DartAstParserService {
         return (b.nestingLevel ?? 0).compareTo(a.nestingLevel ?? 0);
       });
 
-    final rootWidgets = <WidgetTreeNode>[];
-    final widgetStack = <_WidgetInfo>[];
+    final rootNodes = <WidgetTreeNode>[];
+    final nodeStack = <WidgetTreeNode>[];
+    final infoStack = <_WidgetInfo>[];
 
     for (final widget in sortedWidgets) {
+      // Pop stack until we find a valid parent or stack is empty
+      while (nodeStack.isNotEmpty && infoStack.isNotEmpty) {
+        final parentInfo = infoStack.last;
+        final parentNesting = parentInfo.nestingLevel ?? 0;
+        final currentNesting = widget.nestingLevel ?? 0;
+
+        // Check if current widget is a child of the parent
+        if (currentNesting > parentNesting &&
+            widget.line > parentInfo.line &&
+            (parentInfo.endLine == null || widget.line <= parentInfo.endLine!)) {
+          break; // Found valid parent
+        } else {
+          nodeStack.removeLast();
+          infoStack.removeLast();
+        }
+      }
+
+      // Create node with mutable children list
       final node = WidgetTreeNode(
         name: widget.name,
         type: classifyWidget(widget.name),
@@ -183,32 +208,36 @@ class DartAstParserService {
         properties: widget.properties,
         sourceCode: widget.sourceCode,
         nestingLevel: widget.nestingLevel,
-        children: [],
+        children: [], // Will be populated as we find children
       );
 
-      while (widgetStack.isNotEmpty) {
-        final parent = widgetStack.last;
-        final parentNesting = parent.nestingLevel ?? 0;
-        final currentNesting = widget.nestingLevel ?? 0;
-
-        if (currentNesting > parentNesting &&
-            widget.line > parent.line &&
-            (parent.endLine == null || widget.line <= parent.endLine!)) {
-          parent.childNodes.add(node);
-          break;
-        } else {
-          widgetStack.removeLast();
-        }
+      if (nodeStack.isNotEmpty) {
+        // Add as child of parent node
+        nodeStack.last.children.add(node);
+      } else {
+        // No parent, this is a root node
+        rootNodes.add(node);
       }
 
-      if (widgetStack.isEmpty) {
-        rootWidgets.add(node);
-      }
-
-      widgetStack.add(widget..childNodes.add(node));
+      // Push current widget onto stacks for potential children
+      nodeStack.add(node);
+      infoStack.add(widget);
     }
 
-    return rootWidgets;
+    print('Hierarchy built: ${rootNodes.length} root nodes');
+    for (final root in rootNodes) {
+      _printNode(root, 0);
+    }
+
+    return rootNodes;
+  }
+
+  void _printNode(WidgetTreeNode node, int depth) {
+    final indent = '  ' * depth;
+    print('$indent${node.name} (${node.children.length} children)');
+    for (final child in node.children) {
+      _printNode(child, depth + 1);
+    }
   }
 }
 

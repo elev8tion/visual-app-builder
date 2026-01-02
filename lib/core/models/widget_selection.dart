@@ -202,14 +202,30 @@ class ProjectFile {
   final String fileName;
   final bool isDirty;
   final DateTime? lastModified;
+  final bool isDirectory;
+  final FileType type;
 
-  const ProjectFile({
+  ProjectFile({
     required this.path,
     required this.content,
-    required this.fileName,
+    String? fileName,
     this.isDirty = false,
     this.lastModified,
-  });
+    this.isDirectory = false,
+    FileType? type,
+  })  : fileName = fileName ?? path.split('/').last,
+        type = type ?? FileTypeExtension.fromExtension(path.split('.').last);
+
+  String get extension => fileName.contains('.') ? fileName.split('.').last : '';
+
+  bool get isDartFile => extension == 'dart';
+
+  bool get isYamlFile => extension == 'yaml' || extension == 'yml';
+
+  bool get isJsonFile => extension == 'json';
+
+  bool get isTextFile => isDartFile || isYamlFile || isJsonFile ||
+                         extension == 'md' || extension == 'txt';
 
   ProjectFile copyWith({
     String? path,
@@ -217,6 +233,8 @@ class ProjectFile {
     String? fileName,
     bool? isDirty,
     DateTime? lastModified,
+    bool? isDirectory,
+    FileType? type,
   }) {
     return ProjectFile(
       path: path ?? this.path,
@@ -224,6 +242,39 @@ class ProjectFile {
       fileName: fileName ?? this.fileName,
       isDirty: isDirty ?? this.isDirty,
       lastModified: lastModified ?? this.lastModified,
+      isDirectory: isDirectory ?? this.isDirectory,
+      type: type ?? this.type,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'path': path,
+      'content': content,
+      'fileName': fileName,
+      'isDirty': isDirty,
+      'lastModified': lastModified?.toIso8601String(),
+      'isDirectory': isDirectory,
+      'type': type.name,
+    };
+  }
+
+  factory ProjectFile.fromJson(Map<String, dynamic> json) {
+    return ProjectFile(
+      path: json['path'] ?? '',
+      content: json['content'] ?? '',
+      fileName: json['fileName'],
+      isDirty: json['isDirty'] ?? false,
+      lastModified: json['lastModified'] != null
+          ? DateTime.parse(json['lastModified'])
+          : null,
+      isDirectory: json['isDirectory'] ?? false,
+      type: json['type'] != null
+          ? FileType.values.firstWhere(
+              (e) => e.name == json['type'],
+              orElse: () => FileType.other,
+            )
+          : null,
     );
   }
 }
@@ -244,6 +295,35 @@ class FlutterProject {
     this.lastOpened,
   });
 
+  List<ProjectFile> get dartFiles => files.where((f) => f.isDartFile).toList();
+
+  List<ProjectFile> get directories => files.where((f) => f.isDirectory).toList();
+
+  ProjectFile? get pubspecFile => files.where((f) => f.fileName == 'pubspec.yaml').firstOrNull;
+
+  ProjectFile? get mainFile => files.where((f) => f.path.contains('lib/main.dart')).firstOrNull;
+
+  bool get isValidFlutterProject {
+    return pubspecFile != null &&
+           files.any((f) => f.path.contains('lib/')) &&
+           files.any((f) => f.path.contains('lib/main.dart'));
+  }
+
+  ProjectFile? findFileByPath(String filePath) {
+    return files.where((f) => f.path == filePath).firstOrNull;
+  }
+
+  FlutterProject updateFile(String filePath, String newContent) {
+    final updatedFiles = files.map((file) {
+      if (file.path == filePath) {
+        return file.copyWith(content: newContent, isDirty: true);
+      }
+      return file;
+    }).toList();
+
+    return copyWith(files: updatedFiles);
+  }
+
   FlutterProject copyWith({
     String? name,
     String? path,
@@ -258,5 +338,88 @@ class FlutterProject {
       createdAt: createdAt ?? this.createdAt,
       lastOpened: lastOpened ?? this.lastOpened,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'path': path,
+      'files': files.map((f) => f.toJson()).toList(),
+      'createdAt': createdAt?.toIso8601String(),
+      'lastOpened': lastOpened?.toIso8601String(),
+    };
+  }
+
+  factory FlutterProject.fromJson(Map<String, dynamic> json) {
+    return FlutterProject(
+      name: json['name'] ?? 'Unnamed Project',
+      path: json['path'] ?? '',
+      files: (json['files'] as List? ?? [])
+          .map((f) => ProjectFile.fromJson(f as Map<String, dynamic>))
+          .toList(),
+      createdAt: json['createdAt'] != null
+          ? DateTime.parse(json['createdAt'])
+          : null,
+      lastOpened: json['lastOpened'] != null
+          ? DateTime.parse(json['lastOpened'])
+          : null,
+    );
+  }
+}
+
+/// File type classification
+enum FileType {
+  dart,
+  yaml,
+  json,
+  markdown,
+  text,
+  image,
+  other,
+}
+
+/// Extension methods for FileType
+extension FileTypeExtension on FileType {
+  static FileType fromExtension(String extension) {
+    switch (extension.toLowerCase()) {
+      case 'dart':
+        return FileType.dart;
+      case 'yaml':
+      case 'yml':
+        return FileType.yaml;
+      case 'json':
+        return FileType.json;
+      case 'md':
+        return FileType.markdown;
+      case 'txt':
+        return FileType.text;
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'gif':
+      case 'webp':
+        return FileType.image;
+      default:
+        return FileType.other;
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case FileType.dart:
+        return 'Dart';
+      case FileType.yaml:
+        return 'YAML';
+      case FileType.json:
+        return 'JSON';
+      case FileType.markdown:
+        return 'Markdown';
+      case FileType.text:
+        return 'Text';
+      case FileType.image:
+        return 'Image';
+      case FileType.other:
+        return 'Other';
+    }
   }
 }

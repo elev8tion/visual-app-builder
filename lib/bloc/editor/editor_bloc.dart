@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../core/models/widget_node.dart';
 import '../../core/models/widget_selection.dart';
 import '../../core/services/bidirectional_sync_manager.dart';
 import '../../core/services/code_sync_service.dart';
+import '../../core/services/project_manager_service.dart';
 
 // Events
 abstract class EditorEvent extends Equatable {
@@ -120,6 +122,30 @@ class RefreshWidgetTree extends EditorEvent {
   const RefreshWidgetTree();
 }
 
+class LoadProjectFromZip extends EditorEvent {
+  const LoadProjectFromZip();
+}
+
+class LoadProjectFromDirectory extends EditorEvent {
+  const LoadProjectFromDirectory();
+}
+
+class SelectProjectFile extends EditorEvent {
+  final FileNode file;
+  const SelectProjectFile(this.file);
+
+  @override
+  List<Object?> get props => [file];
+}
+
+class ToggleFileExpand extends EditorEvent {
+  final FileNode file;
+  const ToggleFileExpand(this.file);
+
+  @override
+  List<Object?> get props => [file];
+}
+
 // Internal events for sync manager updates
 class _UpdateWidgetTreeInternal extends EditorEvent {
   final WidgetTreeNode? astTree;
@@ -174,6 +200,9 @@ class EditorLoaded extends EditorState {
   final String? currentFile;
   final String? currentFileContent;
   final bool isDirty;
+  final String? projectName;
+  final FlutterProject? project;
+  final bool isLoadingProject;
 
   const EditorLoaded({
     this.widgetTree = const [],
@@ -191,6 +220,9 @@ class EditorLoaded extends EditorState {
     this.currentFile,
     this.currentFileContent,
     this.isDirty = false,
+    this.projectName,
+    this.project,
+    this.isLoadingProject = false,
   });
 
   EditorLoaded copyWith({
@@ -209,6 +241,9 @@ class EditorLoaded extends EditorState {
     String? currentFile,
     String? currentFileContent,
     bool? isDirty,
+    String? projectName,
+    FlutterProject? project,
+    bool? isLoadingProject,
     bool clearSelectedWidget = false,
     bool clearAstWidget = false,
   }) {
@@ -228,6 +263,9 @@ class EditorLoaded extends EditorState {
       currentFile: currentFile ?? this.currentFile,
       currentFileContent: currentFileContent ?? this.currentFileContent,
       isDirty: isDirty ?? this.isDirty,
+      projectName: projectName ?? this.projectName,
+      project: project ?? this.project,
+      isLoadingProject: isLoadingProject ?? this.isLoadingProject,
     );
   }
 
@@ -248,6 +286,9 @@ class EditorLoaded extends EditorState {
         currentFile,
         currentFileContent,
         isDirty,
+        projectName,
+        project,
+        isLoadingProject,
       ];
 }
 
@@ -262,6 +303,7 @@ class EditorError extends EditorState {
 // BLoC
 class EditorBloc extends Bloc<EditorEvent, EditorState> {
   final BidirectionalSyncManager _syncManager = BidirectionalSyncManager.instance;
+  final ProjectManagerService _projectManager = ProjectManagerService.instance;
   StreamSubscription<WidgetTreeNode?>? _widgetTreeSubscription;
   StreamSubscription<WidgetSelection?>? _widgetSelectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _propertySubscription;
@@ -282,6 +324,10 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<DeleteSelectedWidget>(_onDeleteSelectedWidget);
     on<WrapSelectedWidget>(_onWrapSelectedWidget);
     on<RefreshWidgetTree>(_onRefreshWidgetTree);
+    on<LoadProjectFromZip>(_onLoadProjectFromZip);
+    on<LoadProjectFromDirectory>(_onLoadProjectFromDirectory);
+    on<SelectProjectFile>(_onSelectProjectFile);
+    on<ToggleFileExpand>(_onToggleFileExpand);
     on<_UpdateWidgetTreeInternal>(_onUpdateWidgetTreeInternal);
     on<_UpdateSelectionInternal>(_onUpdateSelectionInternal);
     on<_UpdatePropertiesInternal>(_onUpdatePropertiesInternal);
@@ -353,83 +399,36 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   ) async {
     emit(const EditorLoading());
     try {
-      // Load sample widget tree
-      final sampleTree = [
-        WidgetNode(
-          id: '1',
-          type: 'Scaffold',
-          name: 'Scaffold',
-          children: [
-            WidgetNode(
-              id: '2',
-              type: 'AppBar',
-              name: 'AppBar',
-              parentId: '1',
-              properties: {'title': 'My App'},
-            ),
-            WidgetNode(
-              id: '3',
-              type: 'Column',
-              name: 'Body',
-              parentId: '1',
-              children: [
-                WidgetNode(
-                  id: '4',
-                  type: 'Text',
-                  name: 'Title Text',
-                  parentId: '3',
-                  properties: {'text': 'Hello World', 'style': 'headlineMedium'},
-                ),
-                WidgetNode(
-                  id: '5',
-                  type: 'Button',
-                  name: 'Action Button',
-                  parentId: '3',
-                  properties: {'text': 'Click Me', 'onPressed': null},
-                ),
-              ],
-            ),
-          ],
-        ),
-      ];
-
-      final sampleFiles = [
-        FileNode(
-          name: 'lib',
-          path: 'lib',
-          isDirectory: true,
-          isExpanded: true,
-          children: [
-            const FileNode(name: 'main.dart', path: 'lib/main.dart'),
-            FileNode(
-              name: 'screens',
-              path: 'lib/screens',
-              isDirectory: true,
-              children: const [
-                FileNode(name: 'home_screen.dart', path: 'lib/screens/home_screen.dart'),
-              ],
-            ),
-          ],
-        ),
-      ];
-
-      emit(EditorLoaded(
-        widgetTree: sampleTree,
-        files: sampleFiles,
-      ));
+      // Start with empty state - user will load a project via Open Project button
+      emit(const EditorLoaded());
     } catch (e) {
       emit(EditorError(e.toString()));
     }
   }
 
-  void _onSelectWidget(SelectWidget event, Emitter<EditorState> emit) {
+  Future<void> _onSelectWidget(SelectWidget event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
       emit((state as EditorLoaded).copyWith(selectedWidget: event.widget));
+      
+      // Sync with AST selection if widget has a valid ID (format: type_line)
+      if (event.widget?.id != null) {
+        try {
+          final parts = event.widget!.id.split('_');
+          if (parts.length >= 2) {
+            final line = int.parse(parts.last);
+            await _syncManager.selectWidgetAtLine(line);
+          }
+        } catch (e) {
+          debugPrint('Error syncing selection: $e');
+        }
+      }
     }
   }
 
-  void _onUpdateProperty(UpdateProperty event, Emitter<EditorState> emit) {
-    // TODO: Implement property update logic
+  Future<void> _onUpdateProperty(UpdateProperty event, Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+       await _syncManager.updateProperty(event.propertyName, event.value);
+    }
   }
 
   void _onTogglePanel(TogglePanel event, Emitter<EditorState> emit) {
@@ -473,12 +472,10 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         chatMessages: [...currentState.chatMessages, userMessage],
       ));
 
-      // Simulate AI response
-      await Future.delayed(const Duration(seconds: 1));
-
+      // TODO: Integrate with actual AI agent
       final aiMessage = ChatMessage(
         id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
-        content: 'I understand you want to "${event.message}". Let me help you with that...',
+        content: 'AI agent integration pending. Message received: "${event.message}"',
         isUser: false,
         timestamp: DateTime.now(),
       );
@@ -575,6 +572,199 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         currentFileContent: event.code,
         isDirty: true,
       ));
+    }
+  }
+
+  // Project loading handlers
+  Future<void> _onLoadProjectFromZip(
+    LoadProjectFromZip event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(isLoadingProject: true));
+
+      try {
+        final project = await _projectManager.loadProjectFromZip();
+        if (project != null) {
+          final fileTree = _projectManager.getProjectFileTree();
+
+          // Auto-select main.dart if available
+          String? mainContent;
+          String? mainPath;
+          WidgetTreeNode? astTree;
+          List<WidgetNode> widgetNodes = [];
+
+          final mainFile = project.mainFile;
+          if (mainFile != null) {
+            mainContent = mainFile.content;
+            mainPath = mainFile.path;
+
+            // Parse the main file for widget tree
+            final projectFile = ProjectFile(
+              path: mainFile.path,
+              content: mainFile.content,
+            );
+            await _syncManager.setCurrentFile(projectFile);
+
+            // Get the parsed widget tree directly from sync manager
+            astTree = _syncManager.widgetTree;
+            if (astTree != null) {
+              debugPrint('ZIP: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
+              _debugPrintTree(astTree, 0);
+              widgetNodes = _convertAstToWidgetNodes(astTree);
+            } else {
+              debugPrint('ZIP: AST Tree is null after parsing');
+            }
+          }
+
+          emit(currentState.copyWith(
+            isLoadingProject: false,
+            project: project,
+            projectName: project.name,
+            files: fileTree,
+            currentFile: mainPath,
+            currentFileContent: mainContent,
+            astWidgetTree: astTree,
+            widgetTree: widgetNodes,
+          ));
+        } else {
+          emit(currentState.copyWith(isLoadingProject: false));
+        }
+      } catch (e) {
+        debugPrint('Error loading project from ZIP: $e');
+        emit(currentState.copyWith(isLoadingProject: false));
+      }
+    }
+  }
+
+  Future<void> _onLoadProjectFromDirectory(
+    LoadProjectFromDirectory event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(isLoadingProject: true));
+
+      try {
+        final project = await _projectManager.loadProjectFromDirectory();
+        if (project != null) {
+          final fileTree = _projectManager.getProjectFileTree();
+
+          // Auto-select main.dart if available
+          String? mainContent;
+          String? mainPath;
+          WidgetTreeNode? astTree;
+          List<WidgetNode> widgetNodes = [];
+
+          final mainFile = project.mainFile;
+          if (mainFile != null) {
+            mainContent = mainFile.content;
+            mainPath = mainFile.path;
+
+            // Parse the main file for widget tree
+            final projectFile = ProjectFile(
+              path: mainFile.path,
+              content: mainFile.content,
+            );
+            await _syncManager.setCurrentFile(projectFile);
+
+            // Get the parsed widget tree directly from sync manager
+            astTree = _syncManager.widgetTree;
+            if (astTree != null) {
+              debugPrint('DIR: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
+              _debugPrintTree(astTree, 0);
+              widgetNodes = _convertAstToWidgetNodes(astTree);
+            } else {
+              debugPrint('DIR: AST Tree is null after parsing');
+            }
+          }
+
+          emit(currentState.copyWith(
+            isLoadingProject: false,
+            project: project,
+            projectName: project.name,
+            files: fileTree,
+            currentFile: mainPath,
+            currentFileContent: mainContent,
+            astWidgetTree: astTree,
+            widgetTree: widgetNodes,
+          ));
+        } else {
+          emit(currentState.copyWith(isLoadingProject: false));
+        }
+      } catch (e) {
+        debugPrint('Error loading project from directory: $e');
+        emit(currentState.copyWith(isLoadingProject: false));
+      }
+    }
+  }
+
+  Future<void> _onSelectProjectFile(
+    SelectProjectFile event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded && !event.file.isDirectory) {
+      final currentState = state as EditorLoaded;
+      final content = _projectManager.getFileContent(event.file.path);
+
+      if (content != null) {
+        // Update sync manager with new file
+        final projectFile = ProjectFile(
+          path: event.file.path,
+          content: content,
+        );
+        await _syncManager.setCurrentFile(projectFile);
+
+        // Get the parsed widget tree for the selected file
+        final astTree = _syncManager.widgetTree;
+        List<WidgetNode> widgetNodes = [];
+        if (astTree != null) {
+          debugPrint('FILE: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
+          _debugPrintTree(astTree, 0);
+          widgetNodes = _convertAstToWidgetNodes(astTree);
+        }
+
+        emit(currentState.copyWith(
+          currentFile: event.file.path,
+          currentFileContent: content,
+          astWidgetTree: astTree,
+          widgetTree: widgetNodes,
+        ));
+      }
+    }
+  }
+
+  void _onToggleFileExpand(
+    ToggleFileExpand event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      final updatedFiles = _toggleFileExpand(currentState.files, event.file.path);
+      emit(currentState.copyWith(files: updatedFiles));
+    }
+  }
+
+  List<FileNode> _toggleFileExpand(List<FileNode> nodes, String path) {
+    return nodes.map((node) {
+      if (node.path == path) {
+        return node.copyWith(isExpanded: !node.isExpanded);
+      }
+      if (node.isDirectory && node.children.isNotEmpty) {
+        return node.copyWith(
+          children: _toggleFileExpand(node.children, path),
+        );
+      }
+      return node;
+    }).toList();
+  }
+
+  void _debugPrintTree(WidgetTreeNode node, int depth) {
+    final indent = '  ' * depth;
+    debugPrint('$indent- ${node.name} (children: ${node.children.length})');
+    for (final child in node.children) {
+      _debugPrintTree(child, depth + 1);
     }
   }
 }

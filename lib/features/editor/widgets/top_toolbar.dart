@@ -8,9 +8,13 @@ class TopToolbar extends StatelessWidget {
   final bool showProperties;
   final bool showAgent;
   final bool inspectMode;
+  final String? projectName;
+  final bool isLoadingProject;
   final Function(ViewMode)? onViewModeChange;
   final Function(PanelType)? onTogglePanel;
   final VoidCallback? onToggleInspect;
+  final VoidCallback? onLoadZip;
+  final VoidCallback? onLoadFolder;
 
   const TopToolbar({
     super.key,
@@ -19,9 +23,13 @@ class TopToolbar extends StatelessWidget {
     this.showProperties = true,
     this.showAgent = true,
     this.inspectMode = false,
+    this.projectName,
+    this.isLoadingProject = false,
     this.onViewModeChange,
     this.onTogglePanel,
     this.onToggleInspect,
+    this.onLoadZip,
+    this.onLoadFolder,
   });
 
   @override
@@ -52,7 +60,7 @@ class TopToolbar extends StatelessWidget {
               if (!isVeryCompact) ...[
                 const SizedBox(width: 8),
                 Text(
-                  'Visual Builder',
+                  projectName ?? 'Visual Builder',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -60,7 +68,11 @@ class TopToolbar extends StatelessWidget {
                       ),
                 ),
               ],
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
+
+              // Project loading buttons
+              _buildProjectButtons(isVeryCompact),
+              const SizedBox(width: 12),
 
               // View mode tabs
               _buildViewModeTabs(isCompact),
@@ -258,6 +270,97 @@ class TopToolbar extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildProjectButtons(bool isVeryCompact) {
+    if (isLoadingProject) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.customColors['surface'],
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white54,
+              ),
+            ),
+            SizedBox(width: 6),
+            Text(
+              'Loading...',
+              style: TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        if (value == 'zip') {
+          onLoadZip?.call();
+        } else if (value == 'folder') {
+          onLoadFolder?.call();
+        }
+      },
+      offset: const Offset(0, 40),
+      color: AppTheme.customColors['surface'],
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: Color(0xFF3D3D4F)),
+      ),
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'zip',
+          child: Row(
+            children: [
+              Icon(Icons.folder_zip_outlined, size: 16, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              const Text('Open ZIP Project', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'folder',
+          child: Row(
+            children: [
+              Icon(Icons.folder_open_outlined, size: 16, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              const Text('Open Folder', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: isVeryCompact ? 8 : 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.customColors['surface'],
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF3D3D4F)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_open, size: 14, color: AppTheme.primaryColor),
+            if (!isVeryCompact) ...[
+              const SizedBox(width: 6),
+              const Text(
+                'Open Project',
+                style: TextStyle(fontSize: 11, color: Colors.white70),
+              ),
+            ],
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down, size: 14, color: Colors.white54),
+          ],
+        ),
       ),
     );
   }

@@ -62,6 +62,11 @@ dependencies:
   # Device Preview (for multi-device simulation)
   device_preview_plus: ^2.0.1
 
+  # File handling
+  file_picker: ^8.0.0
+  archive: ^3.4.9
+  path: ^1.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

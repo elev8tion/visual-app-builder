@@ -91,9 +91,13 @@ class _EditorView extends StatelessWidget {
             showProperties: state.showProperties,
             showAgent: state.showAgent,
             inspectMode: state.inspectMode,
+            projectName: state.projectName,
+            isLoadingProject: state.isLoadingProject,
             onViewModeChange: (mode) => bloc.add(ChangeViewMode(mode)),
             onTogglePanel: (panel) => bloc.add(TogglePanel(panel)),
             onToggleInspect: () => bloc.add(const ToggleInspectMode()),
+            onLoadZip: () => bloc.add(const LoadProjectFromZip()),
+            onLoadFolder: () => bloc.add(const LoadProjectFromDirectory()),
           ),
 
           // Main content area
@@ -103,7 +107,7 @@ class _EditorView extends StatelessWidget {
                 // Left panel (File Explorer + Widget Tree)
                 if (state.showWidgetTree)
                   SizedBox(
-                    width: 260,
+                    width: 300,
                     child: Column(
                       children: [
                         Expanded(
@@ -111,6 +115,8 @@ class _EditorView extends StatelessWidget {
                           child: FileExplorerPanel(
                             files: state.files,
                             currentFile: state.currentFile,
+                            onFileSelect: (file) => bloc.add(SelectProjectFile(file)),
+                            onToggleExpand: (file) => bloc.add(ToggleFileExpand(file)),
                           ),
                         ),
                         const Divider(height: 1, color: Color(0xFF3D3D4F)),
@@ -148,6 +154,7 @@ class _EditorView extends StatelessWidget {
                           Expanded(
                             child: PropertiesPanel(
                               selectedWidget: state.selectedWidget,
+                              selectedAstWidget: state.selectedAstWidget,
                               onPropertyChange: (name, value) {
                                 if (state.selectedWidget != null) {
                                   bloc.add(UpdateProperty(
@@ -191,12 +198,14 @@ class _EditorView extends StatelessWidget {
           widgetTree: state.widgetTree,
           selectedWidget: state.selectedWidget,
           inspectMode: state.inspectMode,
+          astWidgetTree: state.astWidgetTree,
           onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
         );
       case ViewMode.code:
         return CodeEditorPanel(
           code: state.currentFileContent,
           fileName: state.currentFile,
+          onCodeChange: (code) => bloc.add(UpdateCode(code)),
         );
       case ViewMode.split:
         return Row(
@@ -206,6 +215,7 @@ class _EditorView extends StatelessWidget {
                 widgetTree: state.widgetTree,
                 selectedWidget: state.selectedWidget,
                 inspectMode: state.inspectMode,
+                astWidgetTree: state.astWidgetTree,
                 onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
               ),
             ),
@@ -214,6 +224,7 @@ class _EditorView extends StatelessWidget {
               child: CodeEditorPanel(
                 code: state.currentFileContent,
                 fileName: state.currentFile,
+                onCodeChange: (code) => bloc.add(UpdateCode(code)),
               ),
             ),
           ],
