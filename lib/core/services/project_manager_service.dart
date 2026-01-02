@@ -4,6 +4,9 @@ import 'package:file_picker/file_picker.dart' as picker;
 import 'package:path/path.dart' as path;
 import '../models/widget_node.dart';
 import '../models/widget_selection.dart';
+import '../templates/project_templates.dart';
+import 'terminal_service.dart';
+import 'config_service.dart';
 
 /// Project Manager Service
 ///
@@ -340,5 +343,211 @@ class ProjectManagerService {
   /// Clear current project
   void clearProject() {
     _currentProject = null;
+  }
+
+  // ==================== Project Creation ====================
+
+  final TerminalService _terminal = TerminalService.instance;
+  final ConfigService _config = ConfigService.instance;
+
+  /// Create a new Flutter project from template
+  ///
+  /// Returns a stream of progress messages during creation
+  Stream<String> createNewProject({
+    required String name,
+    required String outputPath,
+    ProjectTemplate template = ProjectTemplate.blank,
+    StateManagement stateManagement = StateManagement.provider,
+    String? organization,
+    List<String>? platforms,
+  }) async* {
+    final projectPath = path.join(outputPath, name);
+
+    yield 'Creating Flutter project: $name\n';
+    yield 'Location: $projectPath\n';
+    yield 'Template: ${template.name}\n';
+    yield 'State Management: ${stateManagement.name}\n\n';
+
+    // Step 1: Run flutter create
+    yield '=== Step 1: Running flutter create ===\n';
+    final org = organization ?? await _config.getOrganization();
+
+    await for (final output in _terminal.createProject(
+      name: name,
+      outputPath: outputPath,
+      organization: org,
+      platforms: platforms,
+    )) {
+      yield output;
+    }
+
+    // Check if project was created successfully
+    final pubspecFile = File(path.join(projectPath, 'pubspec.yaml'));
+    if (!await pubspecFile.exists()) {
+      yield '\nError: Project creation failed. pubspec.yaml not found.\n';
+      return;
+    }
+
+    yield '\n=== Step 2: Applying template ===\n';
+
+    // Step 2: Apply template files
+    if (template != ProjectTemplate.blank) {
+      final templateConfig = ProjectTemplates.getTemplate(template);
+      if (templateConfig != null) {
+        yield 'Applying ${templateConfig.name} template...\n';
+
+        // Get template files from config
+        final templateFiles = templateConfig.fileTemplates;
+
+        for (final entry in templateFiles.entries) {
+          final filePath = path.join(projectPath, entry.key);
+          final file = File(filePath);
+
+          // Create directory if needed
+          final dir = Directory(path.dirname(filePath));
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+
+          await file.writeAsString(entry.value);
+          yield 'Created: ${entry.key}\n';
+        }
+      }
+    }
+
+    // Step 3: Add dependencies to pubspec.yaml
+    yield '\n=== Step 3: Updating dependencies ===\n';
+
+    final dependencies = _getDependencies(stateManagement, template);
+    if (dependencies.isNotEmpty) {
+      await _addDependenciesToPubspec(projectPath, dependencies);
+      yield 'Added dependencies: ${dependencies.keys.join(', ')}\n';
+    }
+
+    // Step 4: Run flutter pub get
+    yield '\n=== Step 4: Getting packages ===\n';
+    await for (final output in _terminal.pubGet(projectPath: projectPath)) {
+      yield output;
+    }
+
+    // Step 5: Load the created project
+    yield '\n=== Step 5: Loading project ===\n';
+    try {
+      await _loadProjectFromPath(projectPath);
+      await _config.addRecentProject(projectPath);
+      yield 'Project loaded successfully!\n';
+    } catch (e) {
+      yield 'Warning: Could not load project: $e\n';
+    }
+
+    yield '\n=== Project creation complete! ===\n';
+    yield 'Project path: $projectPath\n';
+  }
+
+  /// Get dependencies based on state management and template
+  Map<String, String> _getDependencies(StateManagement sm, ProjectTemplate template) {
+    final deps = <String, String>{};
+
+    // State management dependencies
+    switch (sm) {
+      case StateManagement.provider:
+        deps['provider'] = '^6.1.1';
+        break;
+      case StateManagement.riverpod:
+        deps['flutter_riverpod'] = '^2.4.9';
+        deps['riverpod_annotation'] = '^2.3.3';
+        break;
+      case StateManagement.bloc:
+        deps['flutter_bloc'] = '^8.1.3';
+        deps['bloc'] = '^8.1.2';
+        break;
+      case StateManagement.getx:
+        deps['get'] = '^4.6.6';
+        break;
+      case StateManagement.none:
+        break;
+    }
+
+    // Template-specific dependencies
+    switch (template) {
+      case ProjectTemplate.ecommerce:
+        deps['cached_network_image'] = '^3.3.1';
+        deps['intl'] = '^0.19.0';
+        break;
+      case ProjectTemplate.social:
+        deps['cached_network_image'] = '^3.3.1';
+        deps['timeago'] = '^3.6.1';
+        break;
+      case ProjectTemplate.dashboard:
+        deps['fl_chart'] = '^0.66.2';
+        deps['intl'] = '^0.19.0';
+        break;
+      default:
+        break;
+    }
+
+    return deps;
+  }
+
+  /// Add dependencies to pubspec.yaml
+  Future<void> _addDependenciesToPubspec(String projectPath, Map<String, String> dependencies) async {
+    final pubspecPath = path.join(projectPath, 'pubspec.yaml');
+    final pubspecFile = File(pubspecPath);
+
+    if (!await pubspecFile.exists()) return;
+
+    String content = await pubspecFile.readAsString();
+
+    // Find the dependencies section
+    final depsPattern = RegExp(r'dependencies:\s*\n', multiLine: true);
+    final match = depsPattern.firstMatch(content);
+
+    if (match != null) {
+      final insertPosition = match.end;
+      final depsToAdd = StringBuffer();
+
+      for (final entry in dependencies.entries) {
+        // Check if dependency already exists
+        if (!content.contains('${entry.key}:')) {
+          depsToAdd.writeln('  ${entry.key}: ${entry.value}');
+        }
+      }
+
+      if (depsToAdd.isNotEmpty) {
+        content = content.substring(0, insertPosition) +
+                  depsToAdd.toString() +
+                  content.substring(insertPosition);
+        await pubspecFile.writeAsString(content);
+      }
+    }
+  }
+
+  /// Pick output directory for new project
+  Future<String?> pickProjectLocation() async {
+    try {
+      final result = await picker.FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select location for new project',
+      );
+      return result;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Get the default project directory
+  Future<String> getDefaultProjectDirectory() async {
+    final defaultPath = await _config.getDefaultProjectPath();
+    if (defaultPath != null && await Directory(defaultPath).exists()) {
+      return defaultPath;
+    }
+
+    // Fall back to Documents/FlutterProjects
+    final home = Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '.';
+    final documentsPath = path.join(home, 'Documents', 'FlutterProjects');
+    final dir = Directory(documentsPath);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return documentsPath;
   }
 }

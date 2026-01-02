@@ -11,6 +11,8 @@ import 'widgets/code_editor_panel.dart';
 import 'widgets/file_explorer_panel.dart';
 import 'widgets/top_toolbar.dart';
 import 'widgets/source_control_panel.dart';
+import 'widgets/new_project_dialog.dart';
+import 'widgets/ai_app_generator_dialog.dart';
 
 class EditorScreen extends StatelessWidget {
   const EditorScreen({super.key});
@@ -108,10 +110,17 @@ class _EditorViewState extends State<_EditorView> {
             onLoadFolder: () => bloc.add(const LoadProjectFromDirectory()),
             onRun: () => bloc.add(const RunProject()),
             onHotReload: () => bloc.add(const HotReload()),
+            onUndo: () => bloc.add(const Undo()),
+            onRedo: () => bloc.add(const Redo()),
+            onNewProject: () => _showNewProjectDialog(context),
+            onAIGenerate: () => _showAIGeneratorDialog(context),
+            onSettings: () => _showSettingsDialog(context),
+            onStopApp: () => bloc.add(const StopRunningApp()),
             canUndo: state.canUndo,
             canRedo: state.canRedo,
             isDirty: state.isDirty,
             isAppRunning: state.isAppRunning,
+            isOpenAIConfigured: state.isOpenAIConfigured,
           ),
 
           // Main content area
@@ -387,5 +396,26 @@ class _EditorViewState extends State<_EditorView> {
           ],
         );
     }
+  }
+
+  void _showNewProjectDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => const NewProjectDialog(),
+    );
+  }
+
+  void _showAIGeneratorDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => const AIAppGeneratorDialog(),
+    );
+  }
+
+  void _showSettingsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => const SettingsDialog(),
+    );
   }
 }

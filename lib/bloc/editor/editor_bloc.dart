@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../../core/models/widget_node.dart';
 import '../../core/models/widget_selection.dart';
+import '../../core/models/app_spec.dart';
 import '../../core/services/bidirectional_sync_manager.dart';
 
 import '../../core/services/code_sync_service.dart';
@@ -11,6 +12,9 @@ import '../../core/services/project_manager_service.dart';
 import '../../core/services/ai_agent_service.dart';
 import '../../core/services/terminal_service.dart';
 import '../../core/services/git_service.dart';
+import '../../core/services/app_generation_service.dart';
+import '../../core/services/config_service.dart';
+import '../../core/templates/project_templates.dart';
 
 // Events
 abstract class EditorEvent extends Equatable {
@@ -250,6 +254,68 @@ class GitPush extends EditorEvent {
   const GitPush();
 }
 
+// New Project Creation Events
+class CreateNewProject extends EditorEvent {
+  final String name;
+  final String outputPath;
+  final ProjectTemplate template;
+  final StateManagement stateManagement;
+  final String? organization;
+  const CreateNewProject({
+    required this.name,
+    required this.outputPath,
+    this.template = ProjectTemplate.blank,
+    this.stateManagement = StateManagement.provider,
+    this.organization,
+  });
+
+  @override
+  List<Object?> get props => [name, outputPath, template, stateManagement, organization];
+}
+
+class GenerateAppFromPrompt extends EditorEvent {
+  final String prompt;
+  final String projectName;
+  final String outputPath;
+  final String? organization;
+  const GenerateAppFromPrompt({
+    required this.prompt,
+    required this.projectName,
+    required this.outputPath,
+    this.organization,
+  });
+
+  @override
+  List<Object?> get props => [prompt, projectName, outputPath, organization];
+}
+
+class StopRunningApp extends EditorEvent {
+  const StopRunningApp();
+}
+
+class ConfigureOpenAI extends EditorEvent {
+  final String apiKey;
+  final String? model;
+  const ConfigureOpenAI({required this.apiKey, this.model});
+
+  @override
+  List<Object?> get props => [apiKey, model];
+}
+
+class ClearOpenAIConfig extends EditorEvent {
+  const ClearOpenAIConfig();
+}
+
+class _AppGenerationProgress extends EditorEvent {
+  final GenerationProgress progress;
+  const _AppGenerationProgress(this.progress);
+}
+
+class _ProjectCreationProgress extends EditorEvent {
+  final String message;
+  const _ProjectCreationProgress(this.message);
+}
+
 // States
 abstract class EditorState extends Equatable {
   const EditorState();
@@ -312,6 +378,13 @@ class EditorLoaded extends EditorState {
     this.terminalOutput = const [],
     this.gitStatus,
     this.isGitLoading = false,
+    this.isCreatingProject = false,
+    this.isGeneratingApp = false,
+    this.generationLog = const [],
+    this.generationProgress = 0.0,
+    this.generationStatus,
+    this.currentAppSpec,
+    this.isOpenAIConfigured = false,
   });
 
   final bool canUndo;
@@ -320,6 +393,15 @@ class EditorLoaded extends EditorState {
   final List<String> terminalOutput;
   final GitStatus? gitStatus;
   final bool isGitLoading;
+
+  // New properties for project creation and AI generation
+  final bool isCreatingProject;
+  final bool isGeneratingApp;
+  final List<String> generationLog;
+  final double generationProgress;
+  final String? generationStatus;
+  final AppSpec? currentAppSpec;
+  final bool isOpenAIConfigured;
 
   EditorLoaded copyWith({
     List<WidgetNode>? widgetTree,
@@ -348,6 +430,13 @@ class EditorLoaded extends EditorState {
     bool clearAstWidget = false,
     GitStatus? gitStatus,
     bool? isGitLoading,
+    bool? isCreatingProject,
+    bool? isGeneratingApp,
+    List<String>? generationLog,
+    double? generationProgress,
+    String? generationStatus,
+    AppSpec? currentAppSpec,
+    bool? isOpenAIConfigured,
   }) {
     return EditorLoaded(
       widgetTree: widgetTree ?? this.widgetTree,
@@ -374,6 +463,13 @@ class EditorLoaded extends EditorState {
       terminalOutput: terminalOutput ?? this.terminalOutput,
       gitStatus: gitStatus ?? this.gitStatus,
       isGitLoading: isGitLoading ?? this.isGitLoading,
+      isCreatingProject: isCreatingProject ?? this.isCreatingProject,
+      isGeneratingApp: isGeneratingApp ?? this.isGeneratingApp,
+      generationLog: generationLog ?? this.generationLog,
+      generationProgress: generationProgress ?? this.generationProgress,
+      generationStatus: generationStatus ?? this.generationStatus,
+      currentAppSpec: currentAppSpec ?? this.currentAppSpec,
+      isOpenAIConfigured: isOpenAIConfigured ?? this.isOpenAIConfigured,
     );
   }
 
@@ -403,6 +499,13 @@ class EditorLoaded extends EditorState {
         terminalOutput,
         gitStatus,
         isGitLoading,
+        isCreatingProject,
+        isGeneratingApp,
+        generationLog,
+        generationProgress,
+        generationStatus,
+        currentAppSpec,
+        isOpenAIConfigured,
       ];
 }
 
@@ -421,6 +524,8 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   final AIAgentService _aiAgentService = AIAgentService.instance;
   final TerminalService _terminalService = TerminalService.instance;
   final GitService _gitService = GitService();
+  final AppGenerationService _appGenerationService = AppGenerationService.instance;
+  final ConfigService _configService = ConfigService.instance;
   StreamSubscription<WidgetTreeNode?>? _widgetTreeSubscription;
   StreamSubscription<WidgetSelection?>? _widgetSelectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _propertySubscription;
@@ -469,7 +574,17 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<GitCommit>(_onGitCommit);
     on<GitPush>(_onGitPush);
 
+    // New project creation and AI generation handlers
+    on<CreateNewProject>(_onCreateNewProject);
+    on<GenerateAppFromPrompt>(_onGenerateAppFromPrompt);
+    on<StopRunningApp>(_onStopRunningApp);
+    on<ConfigureOpenAI>(_onConfigureOpenAI);
+    on<ClearOpenAIConfig>(_onClearOpenAIConfig);
+    on<_AppGenerationProgress>(_onAppGenerationProgress);
+    on<_ProjectCreationProgress>(_onProjectCreationProgress);
+
     _initSyncManagerListeners();
+    _initOpenAIStatus();
   }
 
   void _initSyncManagerListeners() {
@@ -678,7 +793,8 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         terminalOutput: ['> flutter run -d macos\n'],
       ));
 
-      await for (final output in _terminalService.runProject()) {
+      final projectPath = currentState.project?.path ?? '';
+      await for (final output in _terminalService.runProject(projectPath: projectPath)) {
         add(_UpdateTerminalOutput(output));
       }
     }
@@ -686,10 +802,9 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
 
   Future<void> _onHotReload(HotReload event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
-      // Don't clear logs, just append
-      await for (final output in _terminalService.hotReload()) {
-        add(_UpdateTerminalOutput(output));
-      }
+      add(_UpdateTerminalOutput('> Hot reloading...\n'));
+      await _terminalService.hotReload();
+      add(_UpdateTerminalOutput('Hot reload complete.\n'));
     }
   }
 
@@ -1147,6 +1262,175 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     debugPrint('$indent- ${node.name} (children: ${node.children.length})');
     for (final child in node.children) {
       _debugPrintTree(child, depth + 1);
+    }
+  }
+
+  // Initialize OpenAI status check
+  Future<void> _initOpenAIStatus() async {
+    final isConfigured = await _configService.isOpenAIConfigured();
+    if (state is EditorLoaded) {
+      // ignore: invalid_use_of_visible_for_testing_member
+      emit((state as EditorLoaded).copyWith(isOpenAIConfigured: isConfigured));
+    }
+  }
+
+  // New Project Creation Handler
+  Future<void> _onCreateNewProject(
+    CreateNewProject event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(
+        isCreatingProject: true,
+        generationLog: ['Starting project creation...'],
+        generationProgress: 0.0,
+        generationStatus: 'Creating project...',
+      ));
+
+      await for (final message in _projectManager.createNewProject(
+        name: event.name,
+        outputPath: event.outputPath,
+        template: event.template,
+        stateManagement: event.stateManagement,
+        organization: event.organization,
+      )) {
+        add(_ProjectCreationProgress(message));
+      }
+
+      // Load the created project
+      if (_projectManager.currentProject != null) {
+        final fileTree = _projectManager.getProjectFileTree();
+        final project = _projectManager.currentProject!;
+
+        emit((state as EditorLoaded).copyWith(
+          isCreatingProject: false,
+          generationProgress: 1.0,
+          generationStatus: 'Complete!',
+          project: project,
+          projectName: project.name,
+          files: fileTree,
+        ));
+      } else {
+        emit((state as EditorLoaded).copyWith(
+          isCreatingProject: false,
+          generationStatus: 'Failed to create project',
+        ));
+      }
+    }
+  }
+
+  void _onProjectCreationProgress(
+    _ProjectCreationProgress event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(
+        generationLog: [...currentState.generationLog, event.message],
+      ));
+    }
+  }
+
+  // AI App Generation Handler
+  Future<void> _onGenerateAppFromPrompt(
+    GenerateAppFromPrompt event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(
+        isGeneratingApp: true,
+        generationLog: ['Starting AI app generation...'],
+        generationProgress: 0.0,
+        generationStatus: 'Initializing...',
+      ));
+
+      await for (final progress in _appGenerationService.generateAppFromPrompt(
+        prompt: event.prompt,
+        projectName: event.projectName,
+        outputPath: event.outputPath,
+        organization: event.organization,
+      )) {
+        add(_AppGenerationProgress(progress));
+      }
+    }
+  }
+
+  void _onAppGenerationProgress(
+    _AppGenerationProgress event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      final progress = event.progress;
+
+      emit(currentState.copyWith(
+        generationLog: [...currentState.generationLog, progress.message],
+        generationProgress: progress.progress,
+        generationStatus: progress.message,
+        isGeneratingApp: progress.phase != GenerationPhase.complete &&
+                         progress.phase != GenerationPhase.error,
+      ));
+
+      // If complete, reload the project
+      if (progress.phase == GenerationPhase.complete) {
+        _reloadCurrentProject();
+      }
+    }
+  }
+
+  Future<void> _reloadCurrentProject() async {
+    if (_projectManager.currentProject != null) {
+      final fileTree = _projectManager.getProjectFileTree();
+      final project = _projectManager.currentProject!;
+
+      if (state is EditorLoaded) {
+        // ignore: invalid_use_of_visible_for_testing_member
+        emit((state as EditorLoaded).copyWith(
+          project: project,
+          projectName: project.name,
+          files: fileTree,
+        ));
+      }
+    }
+  }
+
+  // Stop Running App Handler
+  Future<void> _onStopRunningApp(
+    StopRunningApp event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      await _terminalService.stop();
+      emit((state as EditorLoaded).copyWith(
+        isAppRunning: false,
+        terminalOutput: [...(state as EditorLoaded).terminalOutput, 'App stopped.\n'],
+      ));
+    }
+  }
+
+  // Configure OpenAI Handler
+  Future<void> _onConfigureOpenAI(
+    ConfigureOpenAI event,
+    Emitter<EditorState> emit,
+  ) async {
+    await _aiAgentService.configure(event.apiKey, model: event.model);
+
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(isOpenAIConfigured: true));
+    }
+  }
+
+  // Clear OpenAI Config Handler
+  Future<void> _onClearOpenAIConfig(
+    ClearOpenAIConfig event,
+    Emitter<EditorState> emit,
+  ) async {
+    await _configService.clearOpenAIKey();
+
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(isOpenAIConfigured: false));
     }
   }
 }

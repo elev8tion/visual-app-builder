@@ -19,10 +19,15 @@ class TopToolbar extends StatelessWidget {
   final VoidCallback? onRedo;
   final VoidCallback? onRun;
   final VoidCallback? onHotReload;
+  final VoidCallback? onNewProject;
+  final VoidCallback? onAIGenerate;
+  final VoidCallback? onSettings;
+  final VoidCallback? onStopApp;
   final bool canUndo;
   final bool canRedo;
   final bool isDirty;
   final bool isAppRunning;
+  final bool isOpenAIConfigured;
 
   const TopToolbar({
     super.key,
@@ -43,10 +48,15 @@ class TopToolbar extends StatelessWidget {
     this.onRedo,
     this.onRun,
     this.onHotReload,
+    this.onNewProject,
+    this.onAIGenerate,
+    this.onSettings,
+    this.onStopApp,
     this.canUndo = false,
     this.canRedo = false,
     this.isDirty = false,
     this.isAppRunning = false,
+    this.isOpenAIConfigured = false,
   });
 
   @override
@@ -129,12 +139,37 @@ class TopToolbar extends StatelessWidget {
               _buildInspectButton(isCompact),
               const SizedBox(width: 8),
 
-              // Actions
+              // AI Generate button
+              _buildActionButton(
+                icon: Icons.auto_awesome,
+                label: isVeryCompact ? null : 'AI Generate',
+                isPrimary: false,
+                onTap: onAIGenerate,
+                color: isOpenAIConfigured ? AppTheme.primaryColor : Colors.white54,
+              ),
+              const SizedBox(width: 6),
+
+              // Settings button
+              InkWell(
+                onTap: onSettings,
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  child: Icon(
+                    Icons.settings,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Run/Stop Actions
               _buildActionButton(
                 icon: isAppRunning ? Icons.stop : Icons.play_arrow,
                 label: isAppRunning ? 'Stop' : (isVeryCompact ? null : 'Run'),
                 isPrimary: !isAppRunning,
-                onTap: onRun,
+                onTap: isAppRunning ? onStopApp : onRun,
                 color: isAppRunning ? Colors.red : null,
               ),
               if (isAppRunning) ...[
@@ -336,7 +371,9 @@ class TopToolbar extends StatelessWidget {
 
     return PopupMenuButton<String>(
       onSelected: (value) {
-        if (value == 'zip') {
+        if (value == 'new') {
+          onNewProject?.call();
+        } else if (value == 'zip') {
           onLoadZip?.call();
         } else if (value == 'folder') {
           onLoadFolder?.call();
@@ -349,6 +386,17 @@ class TopToolbar extends StatelessWidget {
         side: const BorderSide(color: Color(0xFF3D3D4F)),
       ),
       itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'new',
+          child: Row(
+            children: [
+              Icon(Icons.create_new_folder, size: 16, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              const Text('New Project', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
         PopupMenuItem(
           value: 'zip',
           child: Row(

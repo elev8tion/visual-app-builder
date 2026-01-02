@@ -67,6 +67,9 @@ dependencies:
   archive: ^3.4.9
   path: ^1.9.0
 
+  # HTTP for OpenAI API
+  http: ^1.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
