@@ -105,7 +105,6 @@ class _EditorViewState extends State<_EditorView> {
             onTogglePanel: (panel) => bloc.add(TogglePanel(panel)),
             onToggleInspect: () => bloc.add(const ToggleInspectMode()),
             onLoadZip: () => bloc.add(const LoadProjectFromZip()),
-
             onLoadFolder: () => bloc.add(const LoadProjectFromDirectory()),
             onRun: () => bloc.add(const RunProject()),
             onHotReload: () => bloc.add(const HotReload()),
@@ -121,20 +120,7 @@ class _EditorViewState extends State<_EditorView> {
               children: [
                 // Left panel (File Explorer + Widget Tree)
                 if (state.showWidgetTree)
-                      ],
-                    ),
-                  ),
-
-                if (state.showWidgetTree)
-                  const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
-
-                // Left Panel - Source Control (alternative logic required to switch tabs eventually)
-                // For MVP, we'll put Source Control in the left panel if a new 'showSourceControl' state existed.
-                // But the plan says "Add Source Control tab to the left panel (next to File Explorer)".
-                // Let's implement a simple tab switcher in the Left Panel area.
-                
-                if (state.showWidgetTree) // Re-using this flag for "Left Panel Open" for now
-                   SizedBox(
+                  SizedBox(
                     width: 300,
                     child: Column(
                       children: [
@@ -144,35 +130,37 @@ class _EditorViewState extends State<_EditorView> {
                           color: const Color(0xFF252535),
                           child: Row(
                             children: [
-                               Expanded(
+                              Expanded(
                                 child: InkWell(
                                   onTap: () => setState(() => _selectedLeftTabIndex = 0),
                                   child: Container(
                                     alignment: Alignment.center,
                                     color: _selectedLeftTabIndex == 0 ? const Color(0xFF3D3D4F) : Colors.transparent,
-                                    child: Text('Files', style: TextStyle(
-                                      color: _selectedLeftTabIndex == 0 ? Colors.white : Colors.white54, 
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    )),
+                                    child: Text('Files',
+                                        style: TextStyle(
+                                          color: _selectedLeftTabIndex == 0 ? Colors.white : Colors.white54,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        )),
                                   ),
                                 ),
                               ),
                               Expanded(
                                 child: InkWell(
-                                  onTap: () { 
+                                  onTap: () {
                                     setState(() => _selectedLeftTabIndex = 1);
                                     // Refresh status when switching to Git tab
-                                    bloc.add(const GitCheckStatus()); 
+                                    bloc.add(const GitCheckStatus());
                                   },
-                                   child: Container(
+                                  child: Container(
                                     alignment: Alignment.center,
                                     color: _selectedLeftTabIndex == 1 ? const Color(0xFF3D3D4F) : Colors.transparent,
-                                    child: Text('Git', style: TextStyle(
-                                      color: _selectedLeftTabIndex == 1 ? Colors.white : Colors.white54,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    )),
+                                    child: Text('Git',
+                                        style: TextStyle(
+                                          color: _selectedLeftTabIndex == 1 ? Colors.white : Colors.white54,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                        )),
                                   ),
                                 ),
                               ),
@@ -193,7 +181,8 @@ class _EditorViewState extends State<_EditorView> {
                                       onFileSelect: (file) => bloc.add(SelectProjectFile(file)),
                                       onToggleExpand: (file) => bloc.add(ToggleFileExpand(file)),
                                       onCreateFile: (name, parentPath) => bloc.add(CreateFile(name, parentPath)),
-                                      onCreateDirectory: (name, parentPath) => bloc.add(CreateDirectory(name, parentPath)),
+                                      onCreateDirectory: (name, parentPath) =>
+                                          bloc.add(CreateDirectory(name, parentPath)),
                                     ),
                                   ),
                                   const Divider(height: 1, color: Color(0xFF3D3D4F)),
@@ -218,8 +207,9 @@ class _EditorViewState extends State<_EditorView> {
                                 onCommit: (msg) => bloc.add(GitCommit(msg)),
                                 onPush: () => bloc.add(const GitPush()),
                                 onGenerateMessage: (context) {
-                                  // Trigger AI to generate message (we'll reuse the chat panel for now or add a specific event)
-                                  bloc.add(SendAgentMessage('Generate a git commit message for the current staged changes.'));
+                                  // Trigger AI to generate message
+                                  bloc.add(SendAgentMessage(
+                                      'Generate a git commit message for the current staged changes.'));
                                 },
                               ),
                             ],
@@ -229,8 +219,7 @@ class _EditorViewState extends State<_EditorView> {
                     ),
                   ),
 
-                if (state.showWidgetTree)
-                  const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
+                if (state.showWidgetTree) const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
 
                 // Center panel (Preview / Code / Split)
                 Expanded(
@@ -238,32 +227,32 @@ class _EditorViewState extends State<_EditorView> {
                 ),
 
                 // Right panels
-                if (state.showProperties || state.showAgent)
-                  const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
+                if (state.showProperties || state.showAgent) const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),
 
                 if (state.showProperties || state.showAgent)
                   SizedBox(
                     width: 300,
                     child: Column(
                       children: [
-                        if (state.showProperties)
-                          Expanded(
-                            child: PropertiesPanel(
-                              selectedWidget: state.selectedWidget,
-                              selectedAstWidget: state.selectedAstWidget,
-                              onPropertyChange: (name, value) {
-                                if (state.selectedWidget != null) {
-                                  bloc.add(UpdateProperty(
-                                    state.selectedWidget!.id,
-                                    name,
-                                    value,
-                                  ));
-                                }
-                              },
-                            ),
+                        Expanded(
+                          child: PropertiesPanel(
+                            selectedWidget: state.selectedWidget,
+                            selectedAstWidget: state.selectedAstWidget,
+                            additionalProperties: state.selectedWidgetProperties ?? {},
+                            onPropertyChange: (name, value) {
+                              if (state.selectedWidget != null || state.selectedAstWidget != null) {
+                                bloc.add(UpdateProperty(
+                                  state.selectedWidget?.id ?? '',
+                                  name,
+                                  value,
+                                ));
+                              }
+                            },
+                            onDelete: () => bloc.add(const DeleteSelectedWidget()),
+                            onWrap: (wrapper) => bloc.add(WrapSelectedWidget(wrapper)),
                           ),
-                        if (state.showProperties && state.showAgent)
-                          const Divider(height: 1, color: Color(0xFF3D3D4F)),
+                        ),
+                        if (state.showProperties && state.showAgent) const Divider(height: 1, color: Color(0xFF3D3D4F)),
                         if (state.showAgent)
                           Expanded(
                             child: AgentChatPanel(
@@ -282,8 +271,7 @@ class _EditorViewState extends State<_EditorView> {
               ],
             ),
           ),
-        ],
-      ),
+
           // Terminal Panel
           if (state.terminalOutput.isNotEmpty || state.isAppRunning)
             Container(
@@ -365,7 +353,6 @@ class _EditorViewState extends State<_EditorView> {
           code: state.currentFileContent,
           fileName: state.currentFile,
           onCodeChange: (code) => bloc.add(UpdateCode(code)),
-
           onSave: () => bloc.add(const SaveFile()),
           onUndo: () => bloc.add(const Undo()),
           onRedo: () => bloc.add(const Redo()),
@@ -390,7 +377,6 @@ class _EditorViewState extends State<_EditorView> {
                 code: state.currentFileContent,
                 fileName: state.currentFile,
                 onCodeChange: (code) => bloc.add(UpdateCode(code)),
-
                 onSave: () => bloc.add(const SaveFile()),
                 onUndo: () => bloc.add(const Undo()),
                 onRedo: () => bloc.add(const Redo()),

@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
@@ -427,8 +428,17 @@ class CodeSyncService {
       final items = value.map(_formatPropertyValue).join(', ');
       return '[$items]';
     } else if (value is Map) {
+      // Check if it's an EdgeInsets map
+      if (value.containsKey('top') || value.containsKey('left') || value.containsKey('all')) {
+        if (value['all'] != null) {
+          return 'EdgeInsets.all(${value['all']})';
+        }
+        return 'EdgeInsets.only(top: ${value['top'] ?? 0}, bottom: ${value['bottom'] ?? 0}, left: ${value['left'] ?? 0}, right: ${value['right'] ?? 0})';
+      }
       final entries = value.entries.map((e) => '${e.key}: ${_formatPropertyValue(e.value)}').join(', ');
       return '{$entries}';
+    } else if (value is Color) {
+      return 'Color(0x${value.value.toRadixString(16).padLeft(8, '0').toUpperCase()})';
     }
     return value.toString();
   }
@@ -469,6 +479,45 @@ class _PropertyExtractorVisitor extends RecursiveAstVisitor<void> {
       return expr.value;
     } else if (expr is BooleanLiteral) {
       return expr.value;
+    } else if (expr is MethodInvocation || expr is PropertyAccess || expr is Identifier) {
+      final code = expr.toString();
+      
+      // Parse Color(0xFF...)
+      if (code.startsWith('Color(') || code.startsWith('const Color(')) {
+        final match = RegExp(r'0x([A-Fa-f0-9]+)').firstMatch(code);
+        if (match != null) {
+          try {
+            return Color(int.parse(match.group(1)!, radix: 16));
+          } catch (_) {}
+        }
+      }
+      
+      // Parse Colors.xxx
+      if (code.startsWith('Colors.')) {
+        return code; // Keep as string for now, UI handles common colors
+      }
+      
+      // Parse EdgeInsets
+      if (code.startsWith('EdgeInsets.')) {
+        if (code.contains('.all(')) {
+          final val = RegExp(r'\(([^)]+)\)').firstMatch(code)?.group(1);
+          return {'all': double.tryParse(val ?? '0') ?? 0.0};
+        }
+        if (code.contains('.only(')) {
+          final top = RegExp(r'top:\s*([^,)]+)').firstMatch(code)?.group(1);
+          final bottom = RegExp(r'bottom:\s*([^,)]+)').firstMatch(code)?.group(1);
+          final left = RegExp(r'left:\s*([^,)]+)').firstMatch(code)?.group(1);
+          final right = RegExp(r'right:\s*([^,)]+)').firstMatch(code)?.group(1);
+          return {
+            'top': double.tryParse(top ?? '0') ?? 0.0,
+            'bottom': double.tryParse(bottom ?? '0') ?? 0.0,
+            'left': double.tryParse(left ?? '0') ?? 0.0,
+            'right': double.tryParse(right ?? '0') ?? 0.0,
+          };
+        }
+      }
+      
+      return code;
     }
     return expr.toString();
   }

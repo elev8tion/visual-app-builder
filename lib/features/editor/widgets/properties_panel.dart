@@ -11,6 +11,8 @@ class PropertiesPanel extends StatefulWidget {
   final WidgetSelection? selectedAstWidget;
   final Map<String, dynamic> additionalProperties;
   final Function(String, dynamic)? onPropertyChange;
+  final VoidCallback? onDelete;
+  final Function(String)? onWrap;
 
   const PropertiesPanel({
     super.key,
@@ -18,6 +20,8 @@ class PropertiesPanel extends StatefulWidget {
     this.selectedAstWidget,
     this.additionalProperties = const {},
     this.onPropertyChange,
+    this.onDelete,
+    this.onWrap,
   });
 
   @override
@@ -250,7 +254,7 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
 
   List<Widget> _buildStyleProperties() {
     return [
-      _buildColorField('backgroundColor', _parseColor(_properties['color'])),
+      _buildColorField('color', _properties['color']),
       _buildNumberField('borderRadius', _properties['borderRadius'] as num? ?? 0),
       _buildEdgeInsetsField('padding', _properties['padding']),
       _buildEdgeInsetsField('margin', _properties['margin']),
@@ -486,7 +490,8 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
     );
   }
 
-  Widget _buildColorField(String name, Color value) {
+  Widget _buildColorField(String name, dynamic value) {
+    final Color colorValue = _parseColor(value);
     final themeService = ThemeService();
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -499,7 +504,7 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
           ),
           const SizedBox(height: 8),
           ThemeColorPicker(
-            currentColor: value,
+            currentColor: colorValue,
             themeData: themeService.currentTheme,
             onColorChanged: (color) {
               widget.onPropertyChange?.call(name, color);
@@ -566,7 +571,7 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
               child: _buildActionButton(
                 icon: Icons.wrap_text,
                 label: 'Wrap',
-                onTap: () {},
+                onTap: () => _showWrapDialog(),
               ),
             ),
             const SizedBox(width: 8),
@@ -574,7 +579,9 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
               child: _buildActionButton(
                 icon: Icons.content_copy,
                 label: 'Copy',
-                onTap: () {},
+                onTap: () {
+                  // Copy to clipboard or similar
+                },
               ),
             ),
           ],
@@ -587,12 +594,58 @@ class _PropertiesPanelState extends State<PropertiesPanel> {
                 icon: Icons.delete_outline,
                 label: 'Delete',
                 isDestructive: true,
-                onTap: () {},
+                onTap: widget.onDelete ?? () {},
               ),
             ),
           ],
         ),
       ],
+    );
+  }
+
+  void _showWrapDialog() {
+    final wrappers = [
+      'Container',
+      'Padding',
+      'Center',
+      'SizedBox',
+      'Expanded',
+      'Flexible',
+      'GestureDetector',
+      'InkWell',
+      'Card',
+      'Material',
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.customColors['surface'],
+        title: const Text('Wrap with Widget', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: SizedBox(
+          width: 300,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: wrappers.map((wrapper) {
+                return ListTile(
+                  title: Text(wrapper, style: const TextStyle(color: Colors.white70)),
+                  onTap: () {
+                    widget.onWrap?.call(wrapper);
+                    Navigator.of(context).pop();
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
     );
   }
 
