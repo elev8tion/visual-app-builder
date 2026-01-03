@@ -68,6 +68,15 @@ class ProjectManagerService {
     }
   }
 
+  /// Load a Flutter project from a specific path
+  Future<FlutterProject?> loadProjectFromPath(String projectPath) async {
+    try {
+      return await _loadProjectFromPath(projectPath);
+    } catch (e) {
+      throw Exception('Failed to load project from path: $e');
+    }
+  }
+
   /// Extract project from zip bytes
   Future<FlutterProject> _extractProjectFromBytes(List<int> bytes, String fileName) async {
     final archive = ZipDecoder().decodeBytes(bytes);

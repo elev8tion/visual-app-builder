@@ -399,23 +399,35 @@ class _EditorViewState extends State<_EditorView> {
   }
 
   void _showNewProjectDialog(BuildContext context) {
+    final bloc = context.read<EditorBloc>();
     showDialog(
       context: context,
-      builder: (context) => const NewProjectDialog(),
+      builder: (dialogContext) => BlocProvider.value(
+        value: bloc,
+        child: const NewProjectDialog(),
+      ),
     );
   }
 
   void _showAIGeneratorDialog(BuildContext context) {
+    final bloc = context.read<EditorBloc>();
     showDialog(
       context: context,
-      builder: (context) => const AIAppGeneratorDialog(),
+      builder: (dialogContext) => BlocProvider.value(
+        value: bloc,
+        child: const AIAppGeneratorDialog(),
+      ),
     );
   }
 
   void _showSettingsDialog(BuildContext context) {
+    final bloc = context.read<EditorBloc>();
     showDialog(
       context: context,
-      builder: (context) => const SettingsDialog(),
+      builder: (dialogContext) => BlocProvider.value(
+        value: bloc,
+        child: const SettingsDialog(),
+      ),
     );
   }
 }

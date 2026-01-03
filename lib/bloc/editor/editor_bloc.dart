@@ -2,18 +2,21 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
+// Import shared package with prefix for interfaces and shared types
+import 'package:visual_app_builder_shared/visual_app_builder_shared.dart' as shared;
+// Local models (these take precedence for UI state)
 import '../../core/models/widget_node.dart';
 import '../../core/models/widget_selection.dart';
 import '../../core/models/app_spec.dart';
 import '../../core/services/bidirectional_sync_manager.dart';
+import '../../core/services/service_locator.dart';
+// Import local GitStatus and GitFileStatus for state
+import '../../core/services/git_service.dart' show GitStatus, GitFileStatus;
 
 import '../../core/services/code_sync_service.dart';
-import '../../core/services/project_manager_service.dart';
 import '../../core/services/ai_agent_service.dart';
-import '../../core/services/terminal_service.dart';
-import '../../core/services/git_service.dart';
 import '../../core/services/app_generation_service.dart';
-import '../../core/services/config_service.dart';
+import '../../core/services/openai_service.dart';
 import '../../core/templates/project_templates.dart';
 
 // Events
@@ -136,6 +139,14 @@ class LoadProjectFromZip extends EditorEvent {
 
 class LoadProjectFromDirectory extends EditorEvent {
   const LoadProjectFromDirectory();
+}
+
+class LoadProjectFromPath extends EditorEvent {
+  final String path;
+  const LoadProjectFromPath(this.path);
+
+  @override
+  List<Object?> get props => [path];
 }
 
 class SelectProjectFile extends EditorEvent {
@@ -520,12 +531,16 @@ class EditorError extends EditorState {
 // BLoC
 class EditorBloc extends Bloc<EditorEvent, EditorState> {
   final BidirectionalSyncManager _syncManager = BidirectionalSyncManager.instance;
-  final ProjectManagerService _projectManager = ProjectManagerService.instance;
   final AIAgentService _aiAgentService = AIAgentService.instance;
-  final TerminalService _terminalService = TerminalService.instance;
-  final GitService _gitService = GitService();
   final AppGenerationService _appGenerationService = AppGenerationService.instance;
-  final ConfigService _configService = ConfigService.instance;
+
+  // Services from ServiceLocator (platform-aware: web uses API client, desktop uses dart:io)
+  late final shared.IProjectManagerService _projectManager;
+  late final shared.ITerminalService _terminalService;
+  late final shared.IGitService _gitService;
+  late final shared.IConfigService _configService;
+  bool _servicesInitialized = false;
+
   StreamSubscription<WidgetTreeNode?>? _widgetTreeSubscription;
   StreamSubscription<WidgetSelection?>? _widgetSelectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _propertySubscription;
@@ -533,6 +548,8 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   StreamSubscription<SyncEvent>? _syncEventSubscription;
 
   EditorBloc() : super(const EditorInitial()) {
+    // Initialize services from ServiceLocator
+    _initializeServices();
     on<LoadProject>(_onLoadProject);
     on<SelectWidget>(_onSelectWidget);
     on<UpdateProperty>(_onUpdateProperty);
@@ -549,6 +566,7 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<RefreshWidgetTree>(_onRefreshWidgetTree);
     on<LoadProjectFromZip>(_onLoadProjectFromZip);
     on<LoadProjectFromDirectory>(_onLoadProjectFromDirectory);
+    on<LoadProjectFromPath>(_onLoadProjectFromPath);
     on<SelectProjectFile>(_onSelectProjectFile);
     on<ToggleFileExpand>(_onToggleFileExpand);
     on<SaveFile>(_onSaveFile);
@@ -585,6 +603,21 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
 
     _initSyncManagerListeners();
     _initOpenAIStatus();
+  }
+
+  void _initializeServices() {
+    try {
+      _projectManager = ServiceLocator.instance.projectManager;
+      _terminalService = ServiceLocator.instance.terminalService;
+      _gitService = ServiceLocator.instance.gitService;
+      _configService = ServiceLocator.instance.configService;
+      _servicesInitialized = true;
+      debugPrint('EditorBloc: Services initialized from ServiceLocator');
+    } catch (e) {
+      debugPrint('EditorBloc: Failed to initialize services: $e');
+      // Services will throw on access if not initialized
+      _servicesInitialized = false;
+    }
   }
 
   void _initSyncManagerListeners() {
@@ -911,61 +944,13 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     LoadProjectFromZip event,
     Emitter<EditorState> emit,
   ) async {
+    // ZIP loading is not supported in web mode - show message to user
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
-      emit(currentState.copyWith(isLoadingProject: true));
-
-      try {
-        final project = await _projectManager.loadProjectFromZip();
-        if (project != null) {
-          final fileTree = _projectManager.getProjectFileTree();
-
-          // Auto-select main.dart if available
-          String? mainContent;
-          String? mainPath;
-          WidgetTreeNode? astTree;
-          List<WidgetNode> widgetNodes = [];
-
-          final mainFile = project.mainFile;
-          if (mainFile != null) {
-            mainContent = mainFile.content;
-            mainPath = mainFile.path;
-
-            // Parse the main file for widget tree
-            final projectFile = ProjectFile(
-              path: mainFile.path,
-              content: mainFile.content,
-            );
-            await _syncManager.setCurrentFile(projectFile);
-
-            // Get the parsed widget tree directly from sync manager
-            astTree = _syncManager.widgetTree;
-            if (astTree != null) {
-              debugPrint('ZIP: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
-              _debugPrintTree(astTree, 0);
-              widgetNodes = _convertAstToWidgetNodes(astTree);
-            } else {
-              debugPrint('ZIP: AST Tree is null after parsing');
-            }
-          }
-
-          emit(currentState.copyWith(
-            isLoadingProject: false,
-            project: project,
-            projectName: project.name,
-            files: fileTree,
-            currentFile: mainPath,
-            currentFileContent: mainContent,
-            astWidgetTree: astTree,
-            widgetTree: widgetNodes,
-          ));
-        } else {
-          emit(currentState.copyWith(isLoadingProject: false));
-        }
-      } catch (e) {
-        debugPrint('Error loading project from ZIP: $e');
-        emit(currentState.copyWith(isLoadingProject: false));
-      }
+      debugPrint('ZIP loading not supported in PWA mode. Use LoadProjectFromPath instead.');
+      emit(currentState.copyWith(
+        generationStatus: 'ZIP loading not supported. Use Open Project to select a directory.',
+      ));
     }
   }
 
@@ -973,14 +958,32 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     LoadProjectFromDirectory event,
     Emitter<EditorState> emit,
   ) async {
+    // Directory picker is not available in web mode - show message to user
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+      debugPrint('Directory picker not available in PWA mode. Use LoadProjectFromPath with a specific path.');
+      emit(currentState.copyWith(
+        generationStatus: 'Enter a project path to open a project.',
+      ));
+    }
+  }
+
+  Future<void> _onLoadProjectFromPath(
+    LoadProjectFromPath event,
+    Emitter<EditorState> emit,
+  ) async {
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
       emit(currentState.copyWith(isLoadingProject: true));
 
       try {
-        final project = await _projectManager.loadProjectFromDirectory();
-        if (project != null) {
-          final fileTree = _projectManager.getProjectFileTree();
+        // Use openProject from interface
+        final sharedProject = await _projectManager.openProject(event.path);
+        if (sharedProject != null) {
+          final sharedFileTree = _projectManager.getProjectFileTree();
+          // Convert shared types to local types
+          final project = _convertProject(sharedProject);
+          final fileTree = _convertFileNodes(sharedFileTree);
 
           // Auto-select main.dart if available
           String? mainContent;
@@ -988,26 +991,25 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
           WidgetTreeNode? astTree;
           List<WidgetNode> widgetNodes = [];
 
-          final mainFile = project.mainFile;
-          if (mainFile != null) {
-            mainContent = mainFile.content;
-            mainPath = mainFile.path;
+          // Look for main.dart in the file tree
+          final mainFilePath = '${event.path}/lib/main.dart';
+          mainContent = await _projectManager.readFile(mainFilePath);
+          if (mainContent != null) {
+            mainPath = mainFilePath;
 
             // Parse the main file for widget tree
             final projectFile = ProjectFile(
-              path: mainFile.path,
-              content: mainFile.content,
+              path: mainFilePath,
+              content: mainContent,
             );
             await _syncManager.setCurrentFile(projectFile);
 
             // Get the parsed widget tree directly from sync manager
             astTree = _syncManager.widgetTree;
             if (astTree != null) {
-              debugPrint('DIR: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
+              debugPrint('PATH: AST Tree loaded: ${astTree.name} with ${astTree.children.length} children');
               _debugPrintTree(astTree, 0);
               widgetNodes = _convertAstToWidgetNodes(astTree);
-            } else {
-              debugPrint('DIR: AST Tree is null after parsing');
             }
           }
 
@@ -1020,13 +1022,22 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
             currentFileContent: mainContent,
             astWidgetTree: astTree,
             widgetTree: widgetNodes,
+            isGeneratingApp: false,
+            generationProgress: 1.0,
+            generationStatus: 'Project loaded successfully!',
           ));
         } else {
-          emit(currentState.copyWith(isLoadingProject: false));
+          emit(currentState.copyWith(
+            isLoadingProject: false,
+            isGeneratingApp: false,
+          ));
         }
       } catch (e) {
-        debugPrint('Error loading project from directory: $e');
-        emit(currentState.copyWith(isLoadingProject: false));
+        debugPrint('Error loading project from path: $e');
+        emit(currentState.copyWith(
+          isLoadingProject: false,
+          isGeneratingApp: false,
+        ));
       }
     }
   }
@@ -1037,7 +1048,8 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   ) async {
     if (state is EditorLoaded && !event.file.isDirectory) {
       final currentState = state as EditorLoaded;
-      final content = _projectManager.getFileContent(event.file.path);
+      // Use readFile from interface (now async)
+      final content = await _projectManager.readFile(event.file.path);
 
       if (content != null) {
         // Update sync manager with new file
@@ -1096,7 +1108,8 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
       final currentState = state as EditorLoaded;
       if (currentState.currentFile != null && currentState.currentFileContent != null) {
         try {
-          await _projectManager.saveFile(
+          // Use writeFile from interface
+          await _projectManager.writeFile(
             currentState.currentFile!,
             currentState.currentFileContent!,
           );
@@ -1134,8 +1147,9 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
       final currentState = state as EditorLoaded;
       try {
         await _projectManager.createFile(event.fileName, event.parentPath);
-        // Refresh file tree
-        final fileTree = _projectManager.getProjectFileTree();
+        // Refresh file tree and convert from shared to local types
+        final sharedFileTree = _projectManager.getProjectFileTree();
+        final fileTree = _convertFileNodes(sharedFileTree);
         emit(currentState.copyWith(files: fileTree));
       } catch (e) {
          debugPrint('Error creating file: $e');
@@ -1148,8 +1162,9 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
       final currentState = state as EditorLoaded;
       try {
         await _projectManager.createDirectory(event.dirName, event.parentPath);
-        // Refresh file tree
-        final fileTree = _projectManager.getProjectFileTree();
+        // Refresh file tree and convert from shared to local types
+        final sharedFileTree = _projectManager.getProjectFileTree();
+        final fileTree = _convertFileNodes(sharedFileTree);
         emit(currentState.copyWith(files: fileTree));
       } catch (e) {
         debugPrint('Error creating directory: $e');
@@ -1162,39 +1177,26 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
       emit(currentState.copyWith(isGitLoading: true));
-      
+
       try {
-        // Ensure working directory is set
-        final project = currentState.project;
-        if (project != null) {
-          // Assuming project path is the parent of passed main file or similar
-          // Ideally ProjectManager stores the root path. 
-          // For now, we'll try to use the project path from the project manager if available, 
-          // or assume current directory if we started from there.
-           
-           // In a real app we'd explicitly track project root
-           // For this MVP, let's look at the first file in files list for context
-           if (currentState.files.isNotEmpty) {
-             final rootPath = currentState.files.first.path.split('/').sublist(0, currentState.files.first.path.split('/').length - 1).join('/'); // rough estimation
-             // Better: use the project path passed during load
-              final projectPath = _projectManager.currentProjectPath;
-              if (projectPath != null) {
-                _gitService.setWorkingDirectory(projectPath);
-                
-                // Init if needed (though UI handles this button usually)
-                final isRepo = await _gitService.isGitRepository();
-                if (isRepo) {
-                  final status = await _gitService.getStatus();
-                  emit(currentState.copyWith(
-                    gitStatus: status,
-                    isGitLoading: false,
-                  ));
-                } else {
-                   // Not a repo, maybe we should init? or just show empty
-                   emit(currentState.copyWith(isGitLoading: false));
-                }
-              }
-           }
+        final projectPath = _projectManager.currentProjectPath;
+        if (projectPath != null) {
+          // Check if it's a git repository (interface requires path parameter)
+          final isRepo = await _gitService.isGitRepository(projectPath);
+          if (isRepo) {
+            // Get status (interface requires projectPath as first parameter)
+            final sharedStatus = await _gitService.getStatus(projectPath);
+            final status = _convertGitStatus(sharedStatus);
+            emit(currentState.copyWith(
+              gitStatus: status,
+              isGitLoading: false,
+            ));
+          } else {
+            // Not a repo
+            emit(currentState.copyWith(isGitLoading: false));
+          }
+        } else {
+          emit(currentState.copyWith(isGitLoading: false));
         }
       } catch (e) {
         debugPrint('Git Check Status Error: $e');
@@ -1206,9 +1208,13 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   Future<void> _onGitStageFile(GitStageFile event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
       try {
-        await _gitService.stageFile(event.path);
-        // Refresh status
-        add(const GitCheckStatus());
+        final projectPath = _projectManager.currentProjectPath;
+        if (projectPath != null) {
+          // Use stageFiles with list (interface signature)
+          await _gitService.stageFiles(projectPath, [event.path]);
+          // Refresh status
+          add(const GitCheckStatus());
+        }
       } catch (e) {
         debugPrint('Git Stage Error: $e');
       }
@@ -1218,36 +1224,48 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   Future<void> _onGitUnstageFile(GitUnstageFile event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
       try {
-        await _gitService.unstageFile(event.path);
-        add(const GitCheckStatus());
+        final projectPath = _projectManager.currentProjectPath;
+        if (projectPath != null) {
+          // Use unstageFiles with list (interface signature)
+          await _gitService.unstageFiles(projectPath, [event.path]);
+          add(const GitCheckStatus());
+        }
       } catch (e) {
         debugPrint('Git Unstage Error: $e');
       }
     }
   }
-  
+
   Future<void> _onGitCommit(GitCommit event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
       try {
-        await _gitService.commit(event.message);
-        add(const GitCheckStatus());
-        add(_UpdateTerminalOutput('Git Commit: ${event.message}\n'));
+        final projectPath = _projectManager.currentProjectPath;
+        if (projectPath != null) {
+          // Interface requires projectPath as first parameter
+          await _gitService.commit(projectPath, event.message);
+          add(const GitCheckStatus());
+          add(_UpdateTerminalOutput('Git Commit: ${event.message}\n'));
+        }
       } catch (e) {
-         debugPrint('Git Commit Error: $e');
-         add(_UpdateTerminalOutput('Git Commit Error: $e\n'));
+        debugPrint('Git Commit Error: $e');
+        add(_UpdateTerminalOutput('Git Commit Error: $e\n'));
       }
     }
   }
 
   Future<void> _onGitPush(GitPush event, Emitter<EditorState> emit) async {
     if (state is EditorLoaded) {
-       final currentState = state as EditorLoaded;
-       emit(currentState.copyWith(isGitLoading: true));
-       add(_UpdateTerminalOutput('Pushing to remote...\n'));
+      final currentState = state as EditorLoaded;
+      emit(currentState.copyWith(isGitLoading: true));
+      add(_UpdateTerminalOutput('Pushing to remote...\n'));
       try {
-        await _gitService.push();
-        add(const GitCheckStatus());
-        add(const _UpdateTerminalOutput('Git Push Successful!\n'));
+        final projectPath = _projectManager.currentProjectPath;
+        if (projectPath != null) {
+          // Interface requires projectPath as first parameter
+          await _gitService.push(projectPath);
+          add(const GitCheckStatus());
+          add(const _UpdateTerminalOutput('Git Push Successful!\n'));
+        }
         emit(currentState.copyWith(isGitLoading: false));
       } catch (e) {
         debugPrint('Git Push Error: $e');
@@ -1265,13 +1283,38 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     }
   }
 
-  // Initialize OpenAI status check
+  // Initialize OpenAI status check and restore configuration from storage
   Future<void> _initOpenAIStatus() async {
+    debugPrint('=== Initializing OpenAI Status ===');
     final isConfigured = await _configService.isOpenAIConfigured();
+    debugPrint('Config has stored API key: $isConfigured');
+
+    // CRITICAL FIX: Actually load and configure the OpenAI service from stored settings
+    if (isConfigured) {
+      final storedApiKey = await _configService.getOpenAIKey();
+      final storedModel = await _configService.getOpenAIModel();
+      debugPrint('Loaded API key (${storedApiKey?.length ?? 0} chars)');
+
+      if (storedApiKey != null && storedApiKey.isNotEmpty) {
+        // Configure OpenAI Service (for app generation)
+        OpenAIService.instance.configure(
+          apiKey: storedApiKey,
+          model: storedModel,
+        );
+        debugPrint('OpenAIService configured from stored settings');
+        debugPrint('OpenAIService.isConfigured = ${OpenAIService.instance.isConfigured}');
+
+        // Configure AI Agent Service (for chat)
+        await _aiAgentService.configure(storedApiKey, model: storedModel);
+        debugPrint('AIAgentService configured from stored settings');
+      }
+    }
+
     if (state is EditorLoaded) {
       // ignore: invalid_use_of_visible_for_testing_member
       emit((state as EditorLoaded).copyWith(isOpenAIConfigured: isConfigured));
     }
+    debugPrint('=== OpenAI Status Initialization Complete ===');
   }
 
   // New Project Creation Handler
@@ -1288,20 +1331,23 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         generationStatus: 'Creating project...',
       ));
 
-      await for (final message in _projectManager.createNewProject(
+      // Use createProject from interface
+      await for (final message in _projectManager.createProject(
         name: event.name,
         outputPath: event.outputPath,
-        template: event.template,
-        stateManagement: event.stateManagement,
+        template: event.template.name,
+        stateManagement: event.stateManagement.name,
         organization: event.organization,
       )) {
         add(_ProjectCreationProgress(message));
       }
 
       // Load the created project
-      if (_projectManager.currentProject != null) {
-        final fileTree = _projectManager.getProjectFileTree();
-        final project = _projectManager.currentProject!;
+      final sharedProject = _projectManager.currentProject;
+      if (sharedProject != null) {
+        final sharedFileTree = _projectManager.getProjectFileTree();
+        final project = _convertProject(sharedProject);
+        final fileTree = _convertFileNodes(sharedFileTree);
 
         emit((state as EditorLoaded).copyWith(
           isCreatingProject: false,
@@ -1337,8 +1383,19 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     GenerateAppFromPrompt event,
     Emitter<EditorState> emit,
   ) async {
+    debugPrint('');
+    debugPrint('╔══════════════════════════════════════════════════════════════╗');
+    debugPrint('║           BLOC: GenerateAppFromPrompt RECEIVED               ║');
+    debugPrint('╚══════════════════════════════════════════════════════════════╝');
+    debugPrint('Prompt: ${event.prompt}');
+    debugPrint('Project Name: ${event.projectName}');
+    debugPrint('Output Path: ${event.outputPath}');
+    debugPrint('Organization: ${event.organization}');
+    debugPrint('');
+
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
+      debugPrint('BLOC: State is EditorLoaded, proceeding...');
       emit(currentState.copyWith(
         isGeneratingApp: true,
         generationLog: ['Starting AI app generation...'],
@@ -1346,14 +1403,36 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         generationStatus: 'Initializing...',
       ));
 
+      GenerationPhase? lastPhase;
+      int progressCount = 0;
+
+      debugPrint('BLOC: Starting to consume generation stream...');
       await for (final progress in _appGenerationService.generateAppFromPrompt(
         prompt: event.prompt,
         projectName: event.projectName,
         outputPath: event.outputPath,
         organization: event.organization,
       )) {
+        progressCount++;
+        debugPrint('BLOC: Received progress #$progressCount: ${progress.phase} - ${progress.message}');
         add(_AppGenerationProgress(progress));
+        lastPhase = progress.phase;
       }
+
+      debugPrint('BLOC: Generation stream completed');
+      debugPrint('BLOC: Total progress events received: $progressCount');
+      debugPrint('BLOC: Last phase: $lastPhase');
+
+      // After generation completes, load the newly generated project
+      if (lastPhase == GenerationPhase.complete) {
+        final projectPath = '${event.outputPath}/${event.projectName}';
+        debugPrint('BLOC: Generation successful, loading project from: $projectPath');
+        add(LoadProjectFromPath(projectPath));
+      } else {
+        debugPrint('BLOC: Generation did not complete successfully (lastPhase: $lastPhase)');
+      }
+    } else {
+      debugPrint('BLOC: ERROR - State is NOT EditorLoaded, cannot proceed');
     }
   }
 
@@ -1372,18 +1451,15 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         isGeneratingApp: progress.phase != GenerationPhase.complete &&
                          progress.phase != GenerationPhase.error,
       ));
-
-      // If complete, reload the project
-      if (progress.phase == GenerationPhase.complete) {
-        _reloadCurrentProject();
-      }
     }
   }
 
   Future<void> _reloadCurrentProject() async {
-    if (_projectManager.currentProject != null) {
-      final fileTree = _projectManager.getProjectFileTree();
-      final project = _projectManager.currentProject!;
+    final sharedProject = _projectManager.currentProject;
+    if (sharedProject != null) {
+      final sharedFileTree = _projectManager.getProjectFileTree();
+      final project = _convertProject(sharedProject);
+      final fileTree = _convertFileNodes(sharedFileTree);
 
       if (state is EditorLoaded) {
         // ignore: invalid_use_of_visible_for_testing_member
@@ -1415,11 +1491,32 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     ConfigureOpenAI event,
     Emitter<EditorState> emit,
   ) async {
+    debugPrint('BLOC: ConfigureOpenAI event received');
+    debugPrint('BLOC: API Key length: ${event.apiKey.length}');
+
+    // Save to config service for persistence
+    await _configService.setOpenAIKey(event.apiKey);
+    if (event.model != null) {
+      await _configService.setOpenAIModel(event.model!);
+    }
+    debugPrint('BLOC: API key saved to ConfigService');
+
+    // Configure AI Agent Service (for chat)
     await _aiAgentService.configure(event.apiKey, model: event.model);
+    debugPrint('BLOC: AIAgentService configured');
+
+    // Configure OpenAI Service (for app generation) - THIS WAS MISSING!
+    OpenAIService.instance.configure(
+      apiKey: event.apiKey,
+      model: event.model,
+    );
+    debugPrint('BLOC: OpenAIService configured');
+    debugPrint('BLOC: OpenAIService.isConfigured = ${OpenAIService.instance.isConfigured}');
 
     if (state is EditorLoaded) {
       emit((state as EditorLoaded).copyWith(isOpenAIConfigured: true));
     }
+    debugPrint('BLOC: ConfigureOpenAI complete');
   }
 
   // Clear OpenAI Config Handler
@@ -1427,10 +1524,80 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     ClearOpenAIConfig event,
     Emitter<EditorState> emit,
   ) async {
-    await _configService.clearOpenAIKey();
+    // Use setOpenAIKey with empty string to clear (interface doesn't have clearOpenAIKey)
+    await _configService.setOpenAIKey('');
 
     if (state is EditorLoaded) {
       emit((state as EditorLoaded).copyWith(isOpenAIConfigured: false));
+    }
+  }
+
+  // Helper method to convert shared FlutterProject to local FlutterProject
+  FlutterProject _convertProject(shared.FlutterProject sharedProject) {
+    return FlutterProject(
+      name: sharedProject.name,
+      path: sharedProject.path,
+      files: const [], // Shared project doesn't have files, we get them from getProjectFileTree
+    );
+  }
+
+  // Helper method to convert shared FileNode list to local FileNode list
+  List<FileNode> _convertFileNodes(List<shared.FileNode> sharedNodes) {
+    return sharedNodes.map((node) => _convertFileNodeFromShared(node)).toList();
+  }
+
+  // Helper method to convert a shared FileNode to local FileNode
+  FileNode _convertFileNodeFromShared(shared.FileNode sharedNode) {
+    return FileNode(
+      name: sharedNode.name,
+      path: sharedNode.path,
+      isDirectory: sharedNode.isDirectory,
+      isExpanded: sharedNode.isExpanded,
+      children: sharedNode.children.map((c) => _convertFileNodeFromShared(c)).toList(),
+    );
+  }
+
+  // Helper method to convert shared GitStatus to local GitStatus
+  GitStatus _convertGitStatus(shared.GitStatus sharedStatus) {
+    // Convert shared format (staged, unstaged, untracked) to local format (files list)
+    final files = <GitFileStatus>[];
+
+    // Add staged files (GitFileChange objects)
+    for (final change in sharedStatus.staged) {
+      final status = _gitChangeTypeToStatus(change.changeType, isStaged: true);
+      files.add(GitFileStatus(path: change.path, status: status, isStaged: true));
+    }
+
+    // Add unstaged files (GitFileChange objects)
+    for (final change in sharedStatus.unstaged) {
+      final status = _gitChangeTypeToStatus(change.changeType, isStaged: false);
+      files.add(GitFileStatus(path: change.path, status: status, isStaged: false));
+    }
+
+    // Add untracked files (strings)
+    for (final file in sharedStatus.untracked) {
+      files.add(GitFileStatus(path: file, status: '??', isStaged: false));
+    }
+
+    return GitStatus(
+      branch: sharedStatus.branch,
+      files: files,
+    );
+  }
+
+  // Helper to convert GitChangeType enum to status string
+  String _gitChangeTypeToStatus(shared.GitChangeType changeType, {required bool isStaged}) {
+    switch (changeType) {
+      case shared.GitChangeType.added:
+        return 'A';
+      case shared.GitChangeType.modified:
+        return 'M';
+      case shared.GitChangeType.deleted:
+        return 'D';
+      case shared.GitChangeType.renamed:
+        return 'R';
+      case shared.GitChangeType.copied:
+        return 'C';
     }
   }
 }

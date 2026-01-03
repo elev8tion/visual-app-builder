@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Visual Flutter app development IDE with AI-powered code generation">
+  <meta name="keywords" content="flutter, app builder, visual editor, code generation, AI">
+  <meta name="author" content="Visual App Builder">
+
+  <!-- PWA meta tags -->
+  <meta name="theme-color" content="#6366f1">
+  <meta name="color-scheme" content="dark light">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Visual App Builder">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icons/Icon-512.png">
+
+  <title>Visual App Builder</title>
+  <link rel="manifest" href="manifest.json">
+
+  <!-- Loading styles -->
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #1a1a2e;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    .loading-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background-color: #1a1a2e;
+      color: #e5e7eb;
+    }
+
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid #4b5563;
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .loading-text {
+      margin-top: 16px;
+      font-size: 14px;
+      color: #9ca3af;
+    }
+
+    .connection-status {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 12px;
+      background-color: #374151;
+      color: #9ca3af;
+      display: none;
+    }
+
+    .connection-status.error {
+      display: block;
+      background-color: #7f1d1d;
+      color: #fecaca;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <!-- Loading indicator shown while Flutter loads -->
+  <div id="loading" class="loading-container">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading Visual App Builder...</div>
+  </div>
+
+  <!-- Connection status indicator -->
+  <div id="connection-status" class="connection-status"></div>
+
+  <script>
+    // Check backend server connection
+    async function checkBackendConnection() {
+      const statusEl = document.getElementById('connection-status');
+      try {
+        const response = await fetch('http://localhost:8080/health', {
+          method: 'GET',
+          mode: 'cors',
+        });
+        if (!response.ok) throw new Error('Server not responding');
+        statusEl.className = 'connection-status';
+        statusEl.style.display = 'none';
+      } catch (error) {
+        statusEl.className = 'connection-status error';
+        statusEl.textContent = 'Backend server not running. Start the server first.';
+        statusEl.style.display = 'block';
+      }
+    }
+
+    // Check connection on load
+    window.addEventListener('load', () => {
+      checkBackendConnection();
+      // Retry connection check periodically
+      setInterval(checkBackendConnection, 30000);
+    });
+
+    // Hide loading indicator when Flutter is ready
+    window.addEventListener('flutter-first-frame', function() {
+      const loadingEl = document.getElementById('loading');
+      if (loadingEl) {
+        loadingEl.style.display = 'none';
+      }
+    });
+  </script>
+
+  <script src="flutter_bootstrap.js" async></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('service_worker.js').then(function(registration) {
+          console.log('Service Worker registered with scope:', registration.scope);
+        }).catch(function(error) {
+          console.log('Service Worker registration failed:', error);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

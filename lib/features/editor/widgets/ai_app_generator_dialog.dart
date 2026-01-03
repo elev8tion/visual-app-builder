@@ -291,10 +291,14 @@ class _AIAppGeneratorDialogState extends State<AIAppGeneratorDialog> {
   }
 
   void _showSettingsDialog(BuildContext context) {
+    final bloc = context.read<EditorBloc>();
     Navigator.of(context).pop();
     showDialog(
       context: context,
-      builder: (context) => const SettingsDialog(),
+      builder: (dialogContext) => BlocProvider.value(
+        value: bloc,
+        child: const SettingsDialog(),
+      ),
     );
   }
 

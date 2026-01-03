@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'core/theme/app_theme.dart';
+import 'core/services/service_locator.dart';
 import 'features/editor/editor_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize ServiceLocator - this connects web services to the backend
+  try {
+    await ServiceLocator.instance.initialize();
+    debugPrint('ServiceLocator initialized successfully');
+  } catch (e) {
+    debugPrint('ServiceLocator initialization failed: $e');
+    // Continue anyway - the app will show connection error state
+  }
+
   runApp(const VisualAppBuilderApp());
 }
 

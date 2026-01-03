@@ -70,6 +70,13 @@ dependencies:
   # HTTP for OpenAI API
   http: ^1.2.0
 
+  # WebSocket for real-time communication
+  web_socket_channel: ^2.4.0
+
+  # Shared models and interfaces
+  visual_app_builder_shared:
+    path: packages/shared
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

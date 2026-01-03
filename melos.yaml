@@ -1,0 +1,44 @@
+name: visual_app_builder
+repository: https://github.com/yourusername/visual_app_builder
+
+packages:
+  - packages/**
+
+command:
+  bootstrap:
+    usePubspecOverrides: true
+
+scripts:
+  # Run all tests
+  test:
+    run: melos exec -- flutter test
+    description: Run tests in all packages
+
+  # Analyze all packages
+  analyze:
+    run: melos exec -- dart analyze
+    description: Analyze all packages
+
+  # Start development servers
+  dev:
+    run: |
+      echo "Starting backend server..."
+      cd packages/backend && dart run bin/server.dart &
+      echo "Starting frontend..."
+      cd packages/frontend && flutter run -d chrome --web-port 3000
+    description: Start backend and frontend for development
+
+  # Build production
+  build:
+    run: |
+      echo "Building backend..."
+      cd packages/backend && dart compile exe bin/server.dart -o ../../build/vab-server
+      echo "Building frontend..."
+      cd packages/frontend && flutter build web --release
+      cp -r packages/frontend/build/web build/web
+    description: Build production artifacts
+
+  # Clean all packages
+  clean:
+    run: melos exec -- flutter clean
+    description: Clean all packages
