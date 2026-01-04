@@ -1322,8 +1322,14 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     CreateNewProject event,
     Emitter<EditorState> emit,
   ) async {
+    debugPrint('=== _onCreateNewProject received ===');
+    debugPrint('Name: ${event.name}');
+    debugPrint('Path: ${event.outputPath}');
+    debugPrint('Template: ${event.template}');
+
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
+      debugPrint('State is EditorLoaded, emitting creating state...');
       emit(currentState.copyWith(
         isCreatingProject: true,
         generationLog: ['Starting project creation...'],

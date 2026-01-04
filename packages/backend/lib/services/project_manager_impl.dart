@@ -91,9 +91,14 @@ class ProjectManagerImpl implements IProjectManagerService {
       args.addAll(['--platforms', platforms.join(',')]);
     }
 
-    if (template != null) {
+    // Only pass Flutter's built-in templates
+    // Our custom templates (blank, counter, todoList, etc.) are handled post-creation
+    final flutterTemplates = ['app', 'module', 'package', 'plugin', 'skeleton'];
+    if (template != null && flutterTemplates.contains(template)) {
       args.addAll(['-t', template]);
     }
+    // For custom templates like 'blank', 'counter', 'todoList', etc.
+    // we create a default app and will customize it after creation
 
     yield '> flutter ${args.join(' ')}\n';
 
