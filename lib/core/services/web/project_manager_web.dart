@@ -7,6 +7,7 @@ class ProjectManagerWeb implements IProjectManagerService {
   final ApiClient _apiClient;
   FlutterProject? _currentProject;
   String? _currentProjectPath;
+  List<FileNode> _cachedFileTree = [];
 
   ProjectManagerWeb(this._apiClient);
 
@@ -57,16 +58,24 @@ class ProjectManagerWeb implements IProjectManagerService {
       _currentProject = FlutterProject.fromJson(projectData);
       _currentProjectPath = path;
 
+      // Fetch and cache file tree immediately after opening project
+      await refreshFileTree();
+
       return _currentProject;
     } catch (e) {
       return null;
     }
   }
 
+  /// Refresh the cached file tree from backend
+  Future<void> refreshFileTree() async {
+    _cachedFileTree = await fetchFileTree();
+  }
+
   @override
   List<FileNode> getProjectFileTree() {
-    // File tree is fetched on demand from the backend
-    return [];
+    // Return cached file tree (populated after openProject or refreshFileTree)
+    return _cachedFileTree;
   }
 
   @override
@@ -85,19 +94,23 @@ class ProjectManagerWeb implements IProjectManagerService {
 
   @override
   Future<void> createFile(String fileName, String parentPath) async {
-    final fullPath = parentPath.isEmpty ? fileName : '$parentPath/$fileName';
-    await _apiClient.createFile(fullPath);
+    await _apiClient.createFile(fileName, parentPath: parentPath);
+    // Refresh cached file tree after file operations
+    await refreshFileTree();
   }
 
   @override
   Future<void> createDirectory(String dirName, String parentPath) async {
-    final fullPath = parentPath.isEmpty ? dirName : '$parentPath/$dirName';
-    await _apiClient.createFile(fullPath, isDirectory: true);
+    await _apiClient.createFile(dirName, parentPath: parentPath, isDirectory: true);
+    // Refresh cached file tree after file operations
+    await refreshFileTree();
   }
 
   @override
   Future<void> delete(String path) async {
     await _apiClient.deleteFile(path);
+    // Refresh cached file tree after file operations
+    await refreshFileTree();
   }
 
   @override
@@ -123,6 +136,7 @@ class ProjectManagerWeb implements IProjectManagerService {
   void clearProject() {
     _currentProject = null;
     _currentProjectPath = null;
+    _cachedFileTree = [];
   }
 
   /// Fetch file tree from backend

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/widget_selection.dart';
 import 'dart_ast_parser_service.dart';
 import 'code_sync_service.dart' show CodeSyncService, InsertPosition;
+import 'line_offset_tracker.dart';
 
 /// Bidirectional Sync Manager
 ///
@@ -28,6 +29,7 @@ class BidirectionalSyncManager {
   // Services
   final DartAstParserService _astParser = DartAstParserService.instance;
   final CodeSyncService _codeSync = CodeSyncService.instance;
+  final LineOffsetTracker _lineTracker = LineOffsetTracker();
 
   // State streams
   final StreamController<WidgetSelection?> _widgetSelectionController =
@@ -85,10 +87,13 @@ class BidirectionalSyncManager {
     _widgetSelectionController.add(widget);
 
     if (widget != null && _currentFile != null) {
-      // Extract properties from code
+      // Use line tracker to get current line
+      final currentLine = _lineTracker.getCurrentLine(widget.lineNumber);
+
+      // Extract properties from code using tracked line
       _currentProperties = await _codeSync.extractWidgetProperties(
         sourceCode: _currentFile!.content,
-        lineNumber: widget.lineNumber,
+        lineNumber: currentLine,
       );
       _propertyChangesController.add(_currentProperties);
 
@@ -106,9 +111,13 @@ class BidirectionalSyncManager {
   Future<void> selectWidgetAtLine(int lineNumber) async {
     if (_currentFile == null) return;
 
+    // Use line tracker to get current line after any insertions/deletions
+    final currentLine = _lineTracker.getCurrentLine(lineNumber);
+    debugPrint('[BidirectionalSyncManager] selectWidgetAtLine($lineNumber) → using tracked line $currentLine');
+
     final widget = _astParser.findWidgetAtLine(
       _currentFile!.content,
-      lineNumber,
+      currentLine,
       _currentFile!.path,
     );
 
@@ -193,11 +202,12 @@ class BidirectionalSyncManager {
       _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
         await _parseAndSync();
 
-        // If a widget is selected, update its properties
+        // If a widget is selected, update its properties using tracked line
         if (_selectedWidget != null) {
+          final currentLine = _lineTracker.getCurrentLine(_selectedWidget!.lineNumber);
           _currentProperties = await _codeSync.extractWidgetProperties(
             sourceCode: newCode,
-            lineNumber: _selectedWidget!.lineNumber,
+            lineNumber: currentLine,
           );
           _propertyChangesController.add(_currentProperties);
         }
@@ -221,12 +231,31 @@ class BidirectionalSyncManager {
     _isSyncingFromVisual = true;
 
     try {
-      final updatedCode = await _codeSync.insertWidget(
+      final insertionLine = _selectedWidget!.lineNumber;
+
+      final result = await _codeSync.insertWidget(
         sourceCode: _currentFile!.content,
-        lineNumber: _selectedWidget!.lineNumber,
+        lineNumber: insertionLine,
         widgetCode: widgetCode,
         position: position,
       );
+
+      final updatedCode = result['code'] as String;
+      final linesInserted = result['linesInserted'] as int;
+
+      // Record the insertion in the line tracker
+      int trackingLine = insertionLine;
+      if (position == InsertPosition.after) {
+        trackingLine = insertionLine + 1;
+      }
+
+      _lineTracker.recordInsertion(
+        lineNumber: trackingLine,
+        linesInserted: linesInserted,
+      );
+
+      debugPrint('[BidirectionalSyncManager] Inserted $linesInserted lines at line $trackingLine');
+      _lineTracker.debugPrintState();
 
       _currentFile = ProjectFile(
         path: _currentFile!.path,
@@ -257,10 +286,23 @@ class BidirectionalSyncManager {
     _isSyncingFromVisual = true;
 
     try {
-      final updatedCode = await _codeSync.deleteWidget(
+      final result = await _codeSync.deleteWidget(
         sourceCode: _currentFile!.content,
         widget: _selectedWidget!,
       );
+
+      final updatedCode = result['code'] as String;
+      final linesDeleted = result['linesDeleted'] as int;
+      final startLine = result['startLine'] as int;
+
+      // Record the deletion in the line tracker (convert from 0-indexed to 1-indexed)
+      _lineTracker.recordDeletion(
+        startLine: startLine + 1,
+        linesDeleted: linesDeleted,
+      );
+
+      debugPrint('[BidirectionalSyncManager] Deleted $linesDeleted lines starting at line ${startLine + 1}');
+      _lineTracker.debugPrintState();
 
       _currentFile = ProjectFile(
         path: _currentFile!.path,
@@ -335,6 +377,11 @@ class BidirectionalSyncManager {
         _widgetTree = widgetTree;
         _widgetTreeController.add(widgetTree);
         debugPrint('Widget tree parsed: ${widgetTree.children.length} root widgets');
+
+        // Reset line tracker after AST re-parse
+        // The new AST has fresh, accurate line numbers
+        debugPrint('[BidirectionalSyncManager] Resetting line tracker after AST parse');
+        _lineTracker.reset();
       }
     } catch (e) {
       debugPrint('Error parsing widget tree: $e');

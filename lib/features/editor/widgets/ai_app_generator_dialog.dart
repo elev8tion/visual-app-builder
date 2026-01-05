@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../bloc/editor/editor_bloc.dart';
-import '../../../core/services/project_manager_service.dart';
+import '../../../core/services/service_locator.dart';
 
 /// Dialog for AI-powered app generation from natural language prompts
 class AIAppGeneratorDialog extends StatefulWidget {
@@ -36,7 +36,7 @@ class _AIAppGeneratorDialogState extends State<AIAppGeneratorDialog> {
   }
 
   Future<void> _loadDefaultPath() async {
-    final path = await ProjectManagerService.instance.getDefaultProjectDirectory();
+    final path = await ServiceLocator.instance.projectManager.getDefaultProjectDirectory();
     setState(() => _outputPath = path);
   }
 
@@ -284,9 +284,35 @@ class _AIAppGeneratorDialogState extends State<AIAppGeneratorDialog> {
   }
 
   Future<void> _pickLocation() async {
-    final path = await ProjectManagerService.instance.pickProjectLocation();
-    if (path != null) {
-      setState(() => _outputPath = path);
+    // On web, show a dialog to enter the path manually
+    final controller = TextEditingController(text: _outputPath);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Project Location'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Path',
+            hintText: '/Users/username/Documents/FlutterProjects',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      setState(() => _outputPath = result);
     }
   }
 

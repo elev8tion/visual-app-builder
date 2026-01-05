@@ -39,7 +39,7 @@ class _ThemeColorPickerState extends State<ThemeColorPicker> {
                 child: Center(
                   child: Text(
                     widget.currentColor != null
-                        ? '#${widget.currentColor!.value.toRadixString(16).substring(2).toUpperCase()}'
+                        ? '#${widget.currentColor!.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}'
                         : 'No Color',
                     style: TextStyle(
                       color: widget.currentColor != null

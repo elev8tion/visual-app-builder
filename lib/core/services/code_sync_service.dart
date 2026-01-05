@@ -115,7 +115,10 @@ class CodeSyncService {
   }
 
   /// Insert a new widget at a specific location
-  Future<String> insertWidget({
+  /// Returns a map with:
+  /// - 'code': the modified source code
+  /// - 'linesInserted': number of lines that were inserted
+  Future<Map<String, dynamic>> insertWidget({
     required String sourceCode,
     required int lineNumber,
     required String widgetCode,
@@ -126,38 +129,56 @@ class CodeSyncService {
       final targetLine = lineNumber - 1; // Convert to 0-indexed
 
       if (targetLine < 0 || targetLine >= lines.length) {
-        return sourceCode;
+        return {'code': sourceCode, 'linesInserted': 0};
       }
 
       String result;
+      int linesInserted = 0;
+
       switch (position) {
         case InsertPosition.before:
           lines.insert(targetLine, widgetCode);
+          linesInserted = widgetCode.split('\n').length;
           result = lines.join('\n');
           break;
         case InsertPosition.after:
           lines.insert(targetLine + 1, widgetCode);
+          linesInserted = widgetCode.split('\n').length;
           result = lines.join('\n');
           break;
         case InsertPosition.asChild:
+          final beforeLines = sourceCode.split('\n').length;
           result = _insertAsChild(sourceCode, lineNumber, widgetCode);
+          final afterLines = result.split('\n').length;
+          linesInserted = afterLines - beforeLines;
           break;
       }
 
       // Format the result
+      String finalCode;
       try {
-        return _formatter.format(result);
+        finalCode = _formatter.format(result);
+        // Recalculate lines inserted after formatting
+        final finalLines = finalCode.split('\n').length;
+        final originalLines = sourceCode.split('\n').length;
+        linesInserted = finalLines - originalLines;
       } catch (e) {
-        return result;
+        finalCode = result;
       }
+
+      return {'code': finalCode, 'linesInserted': linesInserted};
     } catch (e) {
       // Error inserting widget
-      return sourceCode;
+      return {'code': sourceCode, 'linesInserted': 0};
     }
   }
 
   /// Delete a widget from the code
-  Future<String> deleteWidget({
+  /// Returns a map with:
+  /// - 'code': the modified source code
+  /// - 'linesDeleted': number of lines that were deleted
+  /// - 'startLine': the start line of the deletion (0-indexed)
+  Future<Map<String, dynamic>> deleteWidget({
     required String sourceCode,
     required WidgetSelection widget,
   }) async {
@@ -166,12 +187,13 @@ class CodeSyncService {
       final widgetBounds = _findWidgetBounds(parseResult.unit, widget.lineNumber);
 
       if (widgetBounds == null) {
-        return sourceCode;
+        return {'code': sourceCode, 'linesDeleted': 0, 'startLine': 0};
       }
 
       final lines = sourceCode.split('\n');
       final startLine = widgetBounds['startLine'] as int;
       final endLine = widgetBounds['endLine'] as int;
+      final linesDeleted = endLine - startLine + 1;
 
       // Remove the widget lines
       final before = lines.sublist(0, startLine);
@@ -182,14 +204,27 @@ class CodeSyncService {
       final result = [...before, ...after].join('\n');
 
       // Format the result
+      String finalCode;
+      int finalLinesDeleted;
       try {
-        return _formatter.format(result);
+        finalCode = _formatter.format(result);
+        // Recalculate lines deleted after formatting
+        final originalLines = sourceCode.split('\n').length;
+        final finalLines = finalCode.split('\n').length;
+        finalLinesDeleted = originalLines - finalLines;
       } catch (e) {
-        return result;
+        finalCode = result;
+        finalLinesDeleted = linesDeleted;
       }
+
+      return {
+        'code': finalCode,
+        'linesDeleted': finalLinesDeleted,
+        'startLine': startLine,
+      };
     } catch (e) {
       // Error deleting widget
-      return sourceCode;
+      return {'code': sourceCode, 'linesDeleted': 0, 'startLine': 0};
     }
   }
 
@@ -383,26 +418,132 @@ class CodeSyncService {
     final lines = sourceCode.split('\n');
     final targetLine = parentLine - 1;
 
-    // Find the child: or children: property
-    for (int i = targetLine; i < lines.length; i++) {
+    if (targetLine < 0 || targetLine >= lines.length) {
+      return sourceCode;
+    }
+
+    // Skip the widget declaration line itself and look for child:/children: inside
+    // Start from the line AFTER the widget declaration to find its properties
+    int searchStart = targetLine;
+
+    // If the target line contains the widget opening (like "Column("), skip it
+    final currentLine = lines[targetLine];
+    if (currentLine.contains('(') && !currentLine.contains('child:') && !currentLine.contains('children:')) {
+      searchStart = targetLine + 1;
+    }
+
+    // Track bracket depth to stay within this widget
+    int bracketDepth = 0;
+    bool foundOpening = false;
+
+    // Count opening brackets on/before the target line using robust parser
+    for (int i = 0; i <= targetLine && i < lines.length; i++) {
+      final depth = _countBracketsInLine(lines[i]);
+      bracketDepth += depth;
+      if (depth > 0) foundOpening = true;
+    }
+
+    // Find the child: or children: property within this widget
+    for (int i = searchStart; i < lines.length; i++) {
       final line = lines[i];
-      if (line.contains('child:')) {
-        // Single child - replace or wrap
+
+      // Check for empty children: [] on same line FIRST (before bracket counting)
+      // This handles both "children: []" and "children:[]"
+      if (line.contains('children:') && line.contains('[]')) {
         final indent = _getIndentation(line);
-        lines[i] = '$indent  child: $childWidget,';
-        break;
-      } else if (line.contains('children:')) {
+        // Replace [] with [newWidget]
+        lines[i] = line.replaceFirst('[]', '[\n$indent  $childWidget,\n$indent]');
+        return lines.join('\n');
+      }
+
+      // Check for children: array (multi-line)
+      if (line.contains('children:') && line.contains('[')) {
         // Multiple children - add to list
         final indent = _getIndentation(line);
-        // Find the opening bracket
-        if (line.contains('[')) {
-          lines.insert(i + 1, '$indent    $childWidget,');
-        }
-        break;
+        lines.insert(i + 1, '$indent  $childWidget,');
+        return lines.join('\n');
+      }
+
+      // Track bracket depth to know when we've left the widget using robust parser
+      final lineDepthChange = _countBracketsInLine(line);
+      bracketDepth += lineDepthChange;
+
+      if (foundOpening && bracketDepth <= 0) {
+        // We've exited the widget - insert before this closing bracket
+        final indent = _getIndentation(line);
+        lines.insert(i, '$indent  $childWidget,');
+        return lines.join('\n');
       }
     }
 
     return lines.join('\n');
+  }
+
+  /// Count net bracket depth change in a line, ignoring brackets in strings/comments
+  /// Returns positive for opening brackets, negative for closing brackets
+  int _countBracketsInLine(String line) {
+    int depth = 0;
+    bool inSingleQuote = false;
+    bool inDoubleQuote = false;
+    bool inLineComment = false;
+    bool inBlockComment = false;
+
+    for (int i = 0; i < line.length; i++) {
+      final char = line[i];
+      final nextChar = i + 1 < line.length ? line[i + 1] : '';
+
+      // Handle escape sequences
+      if ((inSingleQuote || inDoubleQuote) && char == '\\' && i + 1 < line.length) {
+        i++; // Skip next character
+        continue;
+      }
+
+      // Handle comment start
+      if (!inSingleQuote && !inDoubleQuote && !inLineComment && !inBlockComment) {
+        if (char == '/' && nextChar == '/') {
+          inLineComment = true;
+          i++; // Skip next char
+          continue;
+        }
+        if (char == '/' && nextChar == '*') {
+          inBlockComment = true;
+          i++; // Skip next char
+          continue;
+        }
+      }
+
+      // Handle comment end
+      if (inBlockComment && char == '*' && nextChar == '/') {
+        inBlockComment = false;
+        i++; // Skip next char
+        continue;
+      }
+
+      // Line comments end at newline (handled by line splitting)
+
+      // Handle string delimiters
+      if (!inLineComment && !inBlockComment) {
+        if (char == "'" && !inDoubleQuote) {
+          inSingleQuote = !inSingleQuote;
+          continue;
+        }
+        if (char == '"' && !inSingleQuote) {
+          inDoubleQuote = !inDoubleQuote;
+          continue;
+        }
+      }
+
+      // Count brackets only if not in string or comment
+      if (!inSingleQuote && !inDoubleQuote && !inLineComment && !inBlockComment) {
+        if (char == '(' || char == '[' || char == '{') {
+          depth++;
+        } else if (char == ')' || char == ']' || char == '}') {
+          depth--;
+        }
+      }
+    }
+
+    return depth;
   }
 
   /// Get the indentation (leading whitespace) of a line
@@ -438,7 +579,8 @@ class CodeSyncService {
       final entries = value.entries.map((e) => '${e.key}: ${_formatPropertyValue(e.value)}').join(', ');
       return '{$entries}';
     } else if (value is Color) {
-      return 'Color(0x${value.value.toRadixString(16).padLeft(8, '0').toUpperCase()})';
+      // Use toARGB32() instead of deprecated .value
+      return 'Color(0x${value.toARGB32().toRadixString(16).padLeft(8, '0').toUpperCase()})';
     }
     return value.toString();
   }

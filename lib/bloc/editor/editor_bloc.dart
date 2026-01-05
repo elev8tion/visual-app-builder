@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Offset;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
@@ -327,6 +328,101 @@ class _ProjectCreationProgress extends EditorEvent {
   const _ProjectCreationProgress(this.message);
 }
 
+// Drag-and-Drop Events
+class StartComponentDrag extends EditorEvent {
+  final String componentId;
+  final Offset startPosition;
+  const StartComponentDrag(this.componentId, this.startPosition);
+
+  @override
+  List<Object?> get props => [componentId, startPosition];
+}
+
+class UpdateDragPosition extends EditorEvent {
+  final Offset position;
+  const UpdateDragPosition(this.position);
+
+  @override
+  List<Object?> get props => [position];
+}
+
+class EndComponentDrag extends EditorEvent {
+  final String? targetWidgetId;
+  final String? dropPosition; // 'inside', 'before', 'after'
+  const EndComponentDrag({this.targetWidgetId, this.dropPosition});
+
+  @override
+  List<Object?> get props => [targetWidgetId, dropPosition];
+}
+
+class CancelComponentDrag extends EditorEvent {
+  const CancelComponentDrag();
+}
+
+class DropComponent extends EditorEvent {
+  final String componentId;
+  final String targetWidgetId;
+  final String dropPosition;
+  final Map<String, dynamic> initialProperties;
+  const DropComponent({
+    required this.componentId,
+    required this.targetWidgetId,
+    required this.dropPosition,
+    this.initialProperties = const {},
+  });
+
+  @override
+  List<Object?> get props => [componentId, targetWidgetId, dropPosition, initialProperties];
+}
+
+class MoveWidget extends EditorEvent {
+  final String widgetId;
+  final String newParentId;
+  final int newIndex;
+  const MoveWidget({
+    required this.widgetId,
+    required this.newParentId,
+    required this.newIndex,
+  });
+
+  @override
+  List<Object?> get props => [widgetId, newParentId, newIndex];
+}
+
+class DuplicateWidget extends EditorEvent {
+  final String widgetId;
+  const DuplicateWidget(this.widgetId);
+
+  @override
+  List<Object?> get props => [widgetId];
+}
+
+class CopyWidget extends EditorEvent {
+  final String widgetId;
+  const CopyWidget(this.widgetId);
+
+  @override
+  List<Object?> get props => [widgetId];
+}
+
+class PasteWidget extends EditorEvent {
+  final String targetParentId;
+  final int index;
+  const PasteWidget({required this.targetParentId, this.index = -1});
+
+  @override
+  List<Object?> get props => [targetParentId, index];
+}
+
+class TogglePalettePanel extends EditorEvent {
+  const TogglePalettePanel();
+}
+
+/// Initialize a scratch canvas for drag-drop without a project
+class InitializeScratchCanvas extends EditorEvent {
+  const InitializeScratchCanvas();
+}
+
 // States
 abstract class EditorState extends Equatable {
   const EditorState();
@@ -396,6 +492,10 @@ class EditorLoaded extends EditorState {
     this.generationStatus,
     this.currentAppSpec,
     this.isOpenAIConfigured = false,
+    // Drag-and-drop state
+    this.isDragging = false,
+    // Scratch canvas mode
+    this.isScratchCanvas = false,
   });
 
   final bool canUndo;
@@ -413,6 +513,12 @@ class EditorLoaded extends EditorState {
   final String? generationStatus;
   final AppSpec? currentAppSpec;
   final bool isOpenAIConfigured;
+
+  // Drag-and-drop state
+  final bool isDragging;
+
+  // Scratch canvas mode (in-memory editing without a project)
+  final bool isScratchCanvas;
 
   EditorLoaded copyWith({
     List<WidgetNode>? widgetTree,
@@ -448,6 +554,11 @@ class EditorLoaded extends EditorState {
     String? generationStatus,
     AppSpec? currentAppSpec,
     bool? isOpenAIConfigured,
+    // Drag-and-drop
+    bool? isDragging,
+    bool clearDragState = false,
+    // Scratch canvas mode
+    bool? isScratchCanvas,
   }) {
     return EditorLoaded(
       widgetTree: widgetTree ?? this.widgetTree,
@@ -481,6 +592,9 @@ class EditorLoaded extends EditorState {
       generationStatus: generationStatus ?? this.generationStatus,
       currentAppSpec: currentAppSpec ?? this.currentAppSpec,
       isOpenAIConfigured: isOpenAIConfigured ?? this.isOpenAIConfigured,
+      // Drag-and-drop
+      isDragging: clearDragState ? false : (isDragging ?? this.isDragging),
+      isScratchCanvas: isScratchCanvas ?? this.isScratchCanvas,
     );
   }
 
@@ -517,6 +631,9 @@ class EditorLoaded extends EditorState {
         generationStatus,
         currentAppSpec,
         isOpenAIConfigured,
+        // Drag-and-drop
+        isDragging,
+        isScratchCanvas,
       ];
 }
 
@@ -601,6 +718,19 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
     on<_AppGenerationProgress>(_onAppGenerationProgress);
     on<_ProjectCreationProgress>(_onProjectCreationProgress);
 
+    // Drag-and-drop handlers
+    on<StartComponentDrag>(_onStartComponentDrag);
+    on<UpdateDragPosition>(_onUpdateDragPosition);
+    on<EndComponentDrag>(_onEndComponentDrag);
+    on<CancelComponentDrag>(_onCancelComponentDrag);
+    on<DropComponent>(_onDropComponent);
+    on<MoveWidget>(_onMoveWidget);
+    on<DuplicateWidget>(_onDuplicateWidget);
+    on<CopyWidget>(_onCopyWidget);
+    on<PasteWidget>(_onPasteWidget);
+    on<TogglePalettePanel>(_onTogglePalettePanel);
+    on<InitializeScratchCanvas>(_onInitializeScratchCanvas);
+
     _initSyncManagerListeners();
     _initOpenAIStatus();
   }
@@ -618,6 +748,27 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
       // Services will throw on access if not initialized
       _servicesInitialized = false;
     }
+  }
+
+  /// Error message shown when backend server is not available
+  static const String _backendNotRunningError = '''
+Backend server not running.
+
+To use this app, you need to start the backend server first:
+
+1. Open a terminal
+2. Navigate to: packages/backend
+3. Run: dart run bin/server.dart
+
+Then refresh this page.
+''';
+
+  /// Check if services are available and return error message if not
+  String? _checkServicesAvailable() {
+    if (!_servicesInitialized) {
+      return _backendNotRunningError;
+    }
+    return null;
   }
 
   void _initSyncManagerListeners() {
@@ -974,6 +1125,17 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
   ) async {
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
+
+      // Check if backend services are available
+      final serviceError = _checkServicesAvailable();
+      if (serviceError != null) {
+        emit(currentState.copyWith(
+          isLoadingProject: false,
+          generationStatus: serviceError,
+        ));
+        return;
+      }
+
       emit(currentState.copyWith(isLoadingProject: true));
 
       try {
@@ -1329,6 +1491,17 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
 
     if (state is EditorLoaded) {
       final currentState = state as EditorLoaded;
+
+      // Check if backend services are available
+      final serviceError = _checkServicesAvailable();
+      if (serviceError != null) {
+        emit(currentState.copyWith(
+          isCreatingProject: false,
+          generationStatus: serviceError,
+        ));
+        return;
+      }
+
       debugPrint('State is EditorLoaded, emitting creating state...');
       emit(currentState.copyWith(
         isCreatingProject: true,
@@ -1604,6 +1777,416 @@ class EditorBloc extends Bloc<EditorEvent, EditorState> {
         return 'R';
       case shared.GitChangeType.copied:
         return 'C';
+    }
+  }
+
+  // =====================================================
+  // DRAG-AND-DROP EVENT HANDLERS
+  // =====================================================
+
+  void _onStartComponentDrag(
+    StartComponentDrag event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(
+        isDragging: true,
+      ));
+    }
+  }
+
+  void _onUpdateDragPosition(
+    UpdateDragPosition event,
+    Emitter<EditorState> emit,
+  ) {
+    // This event is handled locally by canvas_drop_layer.dart
+    // No state update needed in BLoC
+  }
+
+  void _onEndComponentDrag(
+    EndComponentDrag event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(
+        clearDragState: true,
+      ));
+    }
+  }
+
+  void _onCancelComponentDrag(
+    CancelComponentDrag event,
+    Emitter<EditorState> emit,
+  ) {
+    if (state is EditorLoaded) {
+      emit((state as EditorLoaded).copyWith(
+        clearDragState: true,
+      ));
+    }
+  }
+
+  Future<void> _onDropComponent(
+    DropComponent event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+
+      // AUTO-INITIALIZE: If no project/file is loaded, create scratch canvas first
+      if (currentState.currentFile == null && !currentState.isScratchCanvas) {
+        debugPrint('No file loaded - initializing scratch canvas for drop...');
+        await _initializeScratchCanvasInternal(emit);
+        // Wait a tick for the AST to be parsed
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+
+      // Import component registry to get code template
+      // For now, generate simple widget code based on component ID
+      final widgetCode = _generateWidgetCode(event.componentId, event.initialProperties);
+
+      if (widgetCode.isNotEmpty) {
+        // Determine insert position based on dropPosition
+        InsertPosition position;
+        switch (event.dropPosition) {
+          case 'before':
+            position = InsertPosition.before;
+            break;
+          case 'after':
+            position = InsertPosition.after;
+            break;
+          case 'inside':
+          default:
+            position = InsertPosition.asChild;
+            break;
+        }
+
+        // Use existing insert mechanism
+        add(InsertWidgetCode(widgetCode, position));
+      }
+
+      // Clear drag state
+      if (state is EditorLoaded) {
+        emit((state as EditorLoaded).copyWith(clearDragState: true));
+      }
+    }
+  }
+
+  /// Internal method to initialize scratch canvas without an event
+  Future<void> _initializeScratchCanvasInternal(Emitter<EditorState> emit) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+
+      debugPrint('Initializing scratch canvas internally...');
+
+      // Create in-memory project file
+      final projectFile = ProjectFile(
+        path: '/scratch/lib/main.dart',
+        content: _scratchCanvasTemplate,
+        fileName: 'main.dart',
+      );
+
+      // Initialize sync manager with scratch file
+      await _syncManager.setCurrentFile(projectFile);
+
+      // Get the parsed widget tree
+      final astTree = _syncManager.widgetTree;
+      List<WidgetNode> widgetNodes = [];
+      if (astTree != null) {
+        debugPrint('Scratch canvas AST loaded: ${astTree.name} with ${astTree.children.length} children');
+        _debugPrintTree(astTree, 0);
+        widgetNodes = _convertAstToWidgetNodes(astTree);
+      }
+
+      // Select the body widget (Column inside Center) as default drop target
+      await _syncManager.selectWidgetAtLine(13); // Line of Column
+
+      emit(currentState.copyWith(
+        isScratchCanvas: true,
+        currentFile: '/scratch/lib/main.dart',
+        currentFileContent: _scratchCanvasTemplate,
+        astWidgetTree: astTree,
+        widgetTree: widgetNodes,
+        projectName: 'Scratch Canvas',
+      ));
+
+      debugPrint('Scratch canvas initialized internally');
+    }
+  }
+
+  String _generateWidgetCode(String componentId, Map<String, dynamic> properties) {
+    // Basic code templates for common widgets
+    // In production, this would use ComponentRegistry.generateCode
+    switch (componentId) {
+      case 'container':
+        return '''Container(
+  ${properties['width'] != null ? 'width: ${properties['width']},' : ''}
+  ${properties['height'] != null ? 'height: ${properties['height']},' : ''}
+  ${properties['color'] != null ? 'color: ${properties['color']},' : ''}
+  child: const Placeholder(),
+)''';
+      case 'column':
+        return '''Column(
+  mainAxisAlignment: MainAxisAlignment.start,
+  crossAxisAlignment: CrossAxisAlignment.center,
+  children: const [],
+)''';
+      case 'row':
+        return '''Row(
+  mainAxisAlignment: MainAxisAlignment.start,
+  crossAxisAlignment: CrossAxisAlignment.center,
+  children: const [],
+)''';
+      case 'text':
+        final textContent = properties['data'] ?? 'Text';
+        return "Text('$textContent')";
+      case 'elevatedButton':
+        final buttonText = properties['text'] ?? 'Button';
+        return '''ElevatedButton(
+  onPressed: () {},
+  child: Text('$buttonText'),
+)''';
+      case 'textField':
+        final label = properties['labelText'] ?? 'Label';
+        return '''TextField(
+  decoration: InputDecoration(
+    labelText: '$label',
+  ),
+)''';
+      case 'icon':
+        return 'const Icon(Icons.star)';
+      case 'sizedBox':
+        return '''const SizedBox(
+  ${properties['width'] != null ? 'width: ${properties['width']},' : ''}
+  ${properties['height'] != null ? 'height: ${properties['height']},' : 'height: 16,'}
+)''';
+      case 'card':
+        return '''Card(
+  child: Padding(
+    padding: const EdgeInsets.all(16),
+    child: const Text('Card content'),
+  ),
+)''';
+      case 'listView':
+        return '''ListView(
+  children: const [],
+)''';
+      case 'center':
+        return '''Center(
+  child: const Placeholder(),
+)''';
+      case 'padding':
+        return '''Padding(
+  padding: const EdgeInsets.all(16),
+  child: const Placeholder(),
+)''';
+      default:
+        // Generic container fallback
+        return '''Container(
+  child: Text('$componentId'),
+)''';
+    }
+  }
+
+  Future<void> _onMoveWidget(
+    MoveWidget event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is! EditorLoaded) return;
+
+    final currentState = state as EditorLoaded;
+
+    // Ensure we have a current file to work with
+    if (currentState.currentFile == null || currentState.currentFileContent == null) {
+      debugPrint('MoveWidget: No file loaded, cannot move widget');
+      return;
+    }
+
+    debugPrint('MoveWidget: Moving ${event.widgetId} -> ${event.newParentId}[${event.newIndex}]');
+
+    try {
+      // Step 1: Find the widget to move by parsing its ID (format: "type_lineNumber")
+      final widgetIdParts = event.widgetId.split('_');
+      if (widgetIdParts.length < 2) {
+        debugPrint('MoveWidget: Invalid widget ID format: ${event.widgetId}');
+        return;
+      }
+
+      final widgetLine = int.tryParse(widgetIdParts.last);
+      if (widgetLine == null) {
+        debugPrint('MoveWidget: Could not parse line number from widget ID: ${event.widgetId}');
+        return;
+      }
+
+      // Step 2: Get the widget's source code by selecting it first
+      await _syncManager.selectWidgetAtLine(widgetLine);
+
+      // Wait a tick for the selection to update
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      final selectedWidget = _syncManager.selectedWidget;
+      if (selectedWidget == null || selectedWidget.sourceCode.isEmpty) {
+        debugPrint('MoveWidget: Could not get source code for widget at line $widgetLine');
+        return;
+      }
+
+      final widgetSourceCode = selectedWidget.sourceCode;
+      debugPrint('MoveWidget: Extracted widget code (${widgetSourceCode.length} chars)');
+
+      // Step 3: Delete the widget from its current position
+      await _syncManager.deleteWidget();
+      debugPrint('MoveWidget: Deleted widget from current position');
+
+      // Wait a tick for the deletion to be processed
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      // Step 4: Find the new parent widget and select it
+      final newParentIdParts = event.newParentId.split('_');
+      if (newParentIdParts.length < 2) {
+        debugPrint('MoveWidget: Invalid parent ID format: ${event.newParentId}');
+        return;
+      }
+
+      final newParentLine = int.tryParse(newParentIdParts.last);
+      if (newParentLine == null) {
+        debugPrint('MoveWidget: Could not parse line number from parent ID: ${event.newParentId}');
+        return;
+      }
+
+      // Select the new parent widget
+      await _syncManager.selectWidgetAtLine(newParentLine);
+
+      // Wait a tick for the selection to update
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      // Step 5: Insert the widget at the new location
+      // For now, we'll insert as a child of the new parent
+      // TODO: Handle newIndex to insert at specific position within children array
+      await _syncManager.insertWidget(widgetSourceCode, InsertPosition.asChild);
+
+      debugPrint('MoveWidget: Successfully moved widget to new parent');
+
+      // The sync manager will automatically update the widget tree
+      // via the stream listeners, so we don't need to manually emit state here
+
+    } catch (e) {
+      debugPrint('MoveWidget: Error moving widget: $e');
+    }
+  }
+
+  Future<void> _onDuplicateWidget(
+    DuplicateWidget event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+
+      // Find widget and get its code
+      if (currentState.selectedAstWidget != null) {
+        final sourceCode = currentState.selectedAstWidget!.sourceCode;
+        if (sourceCode.isNotEmpty) {
+          // Insert as next sibling
+          add(InsertWidgetCode(sourceCode, InsertPosition.after));
+        }
+      }
+    }
+  }
+
+  void _onCopyWidget(
+    CopyWidget event,
+    Emitter<EditorState> emit,
+  ) {
+    // Copy/paste functionality is not wired to UI
+    // This handler does nothing until UI support is added
+  }
+
+  Future<void> _onPasteWidget(
+    PasteWidget event,
+    Emitter<EditorState> emit,
+  ) async {
+    // Copy/paste functionality is not wired to UI
+    // This handler does nothing until UI support is added
+  }
+
+  void _onTogglePalettePanel(
+    TogglePalettePanel event,
+    Emitter<EditorState> emit,
+  ) {
+    // Palette panel visibility is not wired to UI
+    // This handler does nothing until UI support is added
+  }
+
+  // =====================================================
+  // SCRATCH CANVAS INITIALIZATION
+  // =====================================================
+
+  /// Starter template for scratch canvas mode
+  static const String _scratchCanvasTemplate = '''
+import 'package:flutter/material.dart';
+
+class ScratchScreen extends StatelessWidget {
+  const ScratchScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scratch Canvas'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+          ],
+        ),
+      ),
+    );
+  }
+}
+''';
+
+  /// Initialize scratch canvas for drag-drop without a loaded project
+  Future<void> _onInitializeScratchCanvas(
+    InitializeScratchCanvas event,
+    Emitter<EditorState> emit,
+  ) async {
+    if (state is EditorLoaded) {
+      final currentState = state as EditorLoaded;
+
+      debugPrint('Initializing scratch canvas...');
+
+      // Create in-memory project file
+      final projectFile = ProjectFile(
+        path: '/scratch/lib/main.dart',
+        content: _scratchCanvasTemplate,
+        fileName: 'main.dart',
+      );
+
+      // Initialize sync manager with scratch file
+      await _syncManager.setCurrentFile(projectFile);
+
+      // Get the parsed widget tree
+      final astTree = _syncManager.widgetTree;
+      List<WidgetNode> widgetNodes = [];
+      if (astTree != null) {
+        debugPrint('Scratch canvas AST loaded: ${astTree.name} with ${astTree.children.length} children');
+        _debugPrintTree(astTree, 0);
+        widgetNodes = _convertAstToWidgetNodes(astTree);
+      }
+
+      // Select the body widget (Column inside Center) as default drop target
+      // Find line of Column widget for selection
+      await _syncManager.selectWidgetAtLine(13); // Line of Column widget
+
+      emit(currentState.copyWith(
+        isScratchCanvas: true,
+        currentFile: '/scratch/lib/main.dart',
+        currentFileContent: _scratchCanvasTemplate,
+        astWidgetTree: astTree,
+        widgetTree: widgetNodes,
+        projectName: 'Scratch Canvas',
+      ));
+
+      debugPrint('Scratch canvas initialized successfully');
     }
   }
 }

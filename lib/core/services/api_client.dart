@@ -173,10 +173,11 @@ class ApiClient {
     });
   }
 
-  /// Create a new file
-  Future<void> createFile(String path, {bool isDirectory = false}) async {
+  /// Create a new file or directory
+  Future<void> createFile(String name, {String parentPath = '', bool isDirectory = false}) async {
     await post('/api/files', body: {
-      'path': path,
+      'name': name,
+      'parentPath': parentPath,
       'isDirectory': isDirectory,
     });
   }

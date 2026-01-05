@@ -198,16 +198,30 @@ class TerminalServiceImpl implements ITerminalService {
         _runningProcess = null;
       });
 
-      await for (final output in _outputController.stream.timeout(
-        const Duration(seconds: 60),
-        onTimeout: (sink) {},
-      )) {
-        yield output;
-        if (output.contains('is available at') ||
-            output.contains('Application running') ||
-            output.contains('Syncing files')) {
-          break;
+      // Yield initial output from the stream with proper timeout handling
+      // Use a timeout that actually cancels the stream instead of an empty callback
+      try {
+        final timeoutDuration = const Duration(seconds: 60);
+        final startTime = DateTime.now();
+
+        await for (final output in _outputController.stream) {
+          yield output;
+
+          // Break after initial setup (when we see "Running" or similar)
+          if (output.contains('is available at') ||
+              output.contains('Application running') ||
+              output.contains('Syncing files')) {
+            break;
+          }
+
+          // Manual timeout check to prevent hanging
+          if (DateTime.now().difference(startTime) > timeoutDuration) {
+            yield 'Timeout waiting for application to start\n';
+            break;
+          }
         }
+      } on TimeoutException catch (e) {
+        yield 'Timeout: $e\n';
       }
     } catch (e) {
       yield 'Error starting process: $e\n';

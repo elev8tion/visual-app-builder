@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../bloc/editor/editor_bloc.dart';
 import '../../core/models/widget_node.dart';
@@ -13,6 +14,8 @@ import 'widgets/top_toolbar.dart';
 import 'widgets/source_control_panel.dart';
 import 'widgets/new_project_dialog.dart';
 import 'widgets/ai_app_generator_dialog.dart';
+import 'widgets/component_palette_panel.dart';
+import 'widgets/canvas_drop_layer.dart';
 
 class EditorScreen extends StatelessWidget {
   const EditorScreen({super.key});
@@ -90,7 +93,41 @@ class _EditorViewState extends State<_EditorView> {
   Widget _buildEditor(BuildContext context, EditorLoaded state) {
     final bloc = context.read<EditorBloc>();
 
-    return Scaffold(
+    // Debug shortcuts for testing
+    return CallbackShortcuts(
+      bindings: {
+        // Ctrl+I: Initialize scratch canvas for testing
+        const SingleActivator(LogicalKeyboardKey.keyI, control: true): () {
+          debugPrint('DEBUG: Triggering InitializeScratchCanvas via Ctrl+I');
+          bloc.add(const InitializeScratchCanvas());
+        },
+        // Ctrl+T: Test drop a Text widget
+        const SingleActivator(LogicalKeyboardKey.keyT, control: true): () {
+          debugPrint('DEBUG: Triggering DropComponent (Text) via Ctrl+T');
+          bloc.add(const DropComponent(
+            componentId: 'text',
+            targetWidgetId: 'root',
+            dropPosition: 'inside',
+            initialProperties: {'text': 'Hello World'},
+          ));
+        },
+        // Ctrl+D: Debug dump current state
+        const SingleActivator(LogicalKeyboardKey.keyD, control: true): () {
+          debugPrint('DEBUG: Current state dump');
+          debugPrint('  isScratchCanvas: ${state.isScratchCanvas}');
+          debugPrint('  projectName: ${state.projectName}');
+          debugPrint('  currentFile: ${state.currentFile}');
+          debugPrint('  astWidgetTree: ${state.astWidgetTree != null}');
+          debugPrint('  widgetTree count: ${state.widgetTree.length}');
+          if (state.astWidgetTree != null) {
+            debugPrint('  AST Root: ${state.astWidgetTree!.name}');
+            debugPrint('  AST Children: ${state.astWidgetTree!.children.length}');
+          }
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
       backgroundColor: AppTheme.customColors['background'],
       body: Column(
         children: [
@@ -173,6 +210,32 @@ class _EditorViewState extends State<_EditorView> {
                                   ),
                                 ),
                               ),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: () => setState(() => _selectedLeftTabIndex = 2),
+                                  child: Container(
+                                    alignment: Alignment.center,
+                                    color: _selectedLeftTabIndex == 2 ? const Color(0xFF3D3D4F) : Colors.transparent,
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.widgets_outlined,
+                                          size: 14,
+                                          color: _selectedLeftTabIndex == 2 ? Colors.white : Colors.white54,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text('Components',
+                                            style: TextStyle(
+                                              color: _selectedLeftTabIndex == 2 ? Colors.white : Colors.white54,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            )),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -221,6 +284,22 @@ class _EditorViewState extends State<_EditorView> {
                                       'Generate a git commit message for the current staged changes.'));
                                 },
                               ),
+                              // Component Palette Panel (Drag-and-Drop)
+                              ComponentPalettePanel(
+                                onComponentSelected: (component) {
+                                  // Optional: show properties or info about component
+                                  debugPrint('Selected component: ${component.name}');
+                                },
+                                onDragStarted: (component) {
+                                  bloc.add(StartComponentDrag(
+                                    component.id,
+                                    Offset.zero,
+                                  ));
+                                },
+                                onDragEnded: () {
+                                  bloc.add(const CancelComponentDrag());
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -247,11 +326,12 @@ class _EditorViewState extends State<_EditorView> {
                           child: PropertiesPanel(
                             selectedWidget: state.selectedWidget,
                             selectedAstWidget: state.selectedAstWidget,
-                            additionalProperties: state.selectedWidgetProperties ?? {},
+                            additionalProperties: state.selectedWidgetProperties,
                             onPropertyChange: (name, value) {
-                              if (state.selectedWidget != null || state.selectedAstWidget != null) {
+                              final widgetId = state.selectedWidget?.id ?? state.selectedAstWidget?.widgetId;
+                              if (widgetId != null) {
                                 bloc.add(UpdateProperty(
-                                  state.selectedWidget?.id ?? '',
+                                  widgetId,
                                   name,
                                   value,
                                 ));
@@ -313,9 +393,9 @@ class _EditorViewState extends State<_EditorView> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.2),
+                              color: Colors.green.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: Colors.green.withOpacity(0.5)),
+                              border: Border.all(color: Colors.green.withValues(alpha: 0.5)),
                             ),
                             child: const Text('Running', style: TextStyle(fontSize: 10, color: Colors.green)),
                           ),
@@ -344,18 +424,46 @@ class _EditorViewState extends State<_EditorView> {
             ),
         ],
       ),
-    );
+    ),),);  // Close: Scaffold, Focus, CallbackShortcuts
   }
 
   Widget _buildCenterPanel(EditorLoaded state, EditorBloc bloc) {
+    // Helper to wrap preview with drop layer
+    Widget wrapWithDropLayer(Widget preview) {
+      return CanvasDropLayer(
+        widgetTree: state.widgetTree,
+        selectedWidgetId: state.selectedWidget?.id,
+        isDropMode: state.isDragging,
+        onDrop: (component, target) {
+          bloc.add(DropComponent(
+            componentId: component.component.id,
+            targetWidgetId: target.targetWidgetId,
+            dropPosition: target.position.name, // Convert enum to string
+            initialProperties: component.initialProperties,
+          ));
+        },
+        onDragEnter: () {
+          // Visual feedback when drag enters canvas
+          debugPrint('Drag entered canvas');
+        },
+        onDragLeave: () {
+          // Visual feedback when drag leaves canvas
+          debugPrint('Drag left canvas');
+        },
+        child: preview,
+      );
+    }
+
     switch (state.viewMode) {
       case ViewMode.preview:
-        return PreviewPanel(
-          widgetTree: state.widgetTree,
-          selectedWidget: state.selectedWidget,
-          inspectMode: state.inspectMode,
-          astWidgetTree: state.astWidgetTree,
-          onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
+        return wrapWithDropLayer(
+          PreviewPanel(
+            widgetTree: state.widgetTree,
+            selectedWidget: state.selectedWidget,
+            inspectMode: state.inspectMode,
+            astWidgetTree: state.astWidgetTree,
+            onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
+          ),
         );
       case ViewMode.code:
         return CodeEditorPanel(
@@ -372,12 +480,14 @@ class _EditorViewState extends State<_EditorView> {
         return Row(
           children: [
             Expanded(
-              child: PreviewPanel(
-                widgetTree: state.widgetTree,
-                selectedWidget: state.selectedWidget,
-                inspectMode: state.inspectMode,
-                astWidgetTree: state.astWidgetTree,
-                onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
+              child: wrapWithDropLayer(
+                PreviewPanel(
+                  widgetTree: state.widgetTree,
+                  selectedWidget: state.selectedWidget,
+                  inspectMode: state.inspectMode,
+                  astWidgetTree: state.astWidgetTree,
+                  onWidgetSelect: (widget) => bloc.add(SelectWidget(widget)),
+                ),
               ),
             ),
             const VerticalDivider(width: 1, color: Color(0xFF3D3D4F)),

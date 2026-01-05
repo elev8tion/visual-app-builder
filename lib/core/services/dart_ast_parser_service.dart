@@ -1,6 +1,7 @@
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
+import 'package:flutter/foundation.dart';
 import '../models/widget_selection.dart';
 
 /// Dart AST Parser Service
@@ -19,7 +20,7 @@ class DartAstParserService {
 
       if (parseResult.errors.isNotEmpty) {
         for (final error in parseResult.errors) {
-          print('Parse error in $filePath: ${error.message}');
+          debugPrint('Parse error in $filePath: ${error.message}');
         }
       }
 
@@ -47,7 +48,7 @@ class DartAstParserService {
         children: rootWidgets,
       );
     } catch (e) {
-      print('Error parsing widget tree: $e');
+      debugPrint('Error parsing widget tree: $e');
       return WidgetTreeNode(
         name: 'Root',
         type: WidgetType.root,
@@ -95,7 +96,7 @@ class DartAstParserService {
 
       return null;
     } catch (e) {
-      print('Error finding widget at line $lineNumber: $e');
+      debugPrint('Error finding widget at line $lineNumber: $e');
       return null;
     }
   }
@@ -115,7 +116,7 @@ class DartAstParserService {
 
       return widget.properties;
     } catch (e) {
-      print('Error extracting properties: $e');
+      debugPrint('Error extracting properties: $e');
       return widget.properties;
     }
   }
@@ -161,12 +162,16 @@ class DartAstParserService {
   }
 
   /// Build hierarchical widget structure from flat list
+  ///
+  /// FIX: Uses widget END positions to properly determine parent-child relationships.
+  /// A widget can only be a child of another widget if it is CONTAINED within
+  /// the parent's start and end lines (not just having higher nesting level).
   List<WidgetTreeNode> _buildWidgetHierarchy(List<_WidgetInfo> widgets) {
     if (widgets.isEmpty) return [];
 
-    print('Building hierarchy from ${widgets.length} widgets');
+    debugPrint('Building hierarchy from ${widgets.length} widgets');
     for (final w in widgets) {
-      print('  Widget: ${w.name} at line ${w.line}, nesting: ${w.nestingLevel}');
+      debugPrint('  Widget: ${w.name} at lines ${w.line}-${w.endLine}, nesting: ${w.nestingLevel}');
     }
 
     // Sort by line number, then by nesting level (shallowest first for same line)
@@ -184,18 +189,25 @@ class DartAstParserService {
 
     for (final widget in sortedWidgets) {
       // Pop stack until we find a valid parent or stack is empty
+      // CRITICAL FIX: A widget is only a valid parent if the current widget
+      // is FULLY CONTAINED within the parent's line range
       while (nodeStack.isNotEmpty && infoStack.isNotEmpty) {
         final parentInfo = infoStack.last;
-        final parentNesting = parentInfo.nestingLevel ?? 0;
-        final currentNesting = widget.nestingLevel ?? 0;
 
-        // Check if current widget is a child of the parent
-        // A child must have a higher nesting level and start at or after parent line
-        if (currentNesting > parentNesting &&
-            widget.line >= parentInfo.line &&
-            (parentInfo.endLine == null || widget.line <= parentInfo.endLine!)) {
-          break; // Found valid parent
+        // Check if current widget is INSIDE the parent's line range
+        // This fixes the issue where siblings at same nesting level were incorrectly nested
+        final isInsideParent = widget.line >= parentInfo.line &&
+            (parentInfo.endLine == null || widget.line <= parentInfo.endLine!);
+
+        // Additional check: if widget starts AFTER parent ends, it cannot be a child
+        final startsAfterParentEnds = parentInfo.endLine != null &&
+            widget.line > parentInfo.endLine!;
+
+        if (isInsideParent && !startsAfterParentEnds) {
+          // This is a valid parent - the current widget is contained within it
+          break;
         } else {
+          // Current widget is outside parent's scope - pop the stack
           nodeStack.removeLast();
           infoStack.removeLast();
         }
@@ -217,9 +229,11 @@ class DartAstParserService {
       if (nodeStack.isNotEmpty) {
         // Add as child of parent node
         nodeStack.last.children.add(node);
+        debugPrint('  → Adding ${widget.name} as child of ${infoStack.last.name}');
       } else {
         // No parent, this is a root node
         rootNodes.add(node);
+        debugPrint('  → Adding ${widget.name} as root node');
       }
 
       // Push current widget onto stacks for potential children
@@ -227,7 +241,7 @@ class DartAstParserService {
       infoStack.add(widget);
     }
 
-    print('Hierarchy built: ${rootNodes.length} root nodes');
+    debugPrint('Hierarchy built: ${rootNodes.length} root nodes');
     for (final root in rootNodes) {
       _printNode(root, 0);
     }
@@ -237,7 +251,7 @@ class DartAstParserService {
 
   void _printNode(WidgetTreeNode node, int depth) {
     final indent = '  ' * depth;
-    print('$indent${node.name} (${node.children.length} children)');
+    debugPrint('$indent${node.name} (${node.children.length} children)');
     for (final child in node.children) {
       _printNode(child, depth + 1);
     }
@@ -270,9 +284,11 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
     try {
       widgetName = typeName.toString().split('<').first.trim();
     } catch (e) {
-      return;
+      // Continue to visit children even if we can't extract widget name
+      widgetName = '';
     }
 
+    // Only record widgets that start with uppercase (Flutter convention)
     if (widgetName.isNotEmpty && widgetName[0] == widgetName[0].toUpperCase()) {
       if (lineInfo != null) {
         final startLine = lineInfo.getLocation(node.offset).lineNumber;
@@ -281,6 +297,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
         final properties = _extractProperties(node);
         final sourceSnippet = _getSourceSnippet(node.offset, node.end);
 
+        // Record widget at CURRENT nesting level
         final widgetInfo = _WidgetInfo(
           name: widgetName,
           line: startLine,
@@ -291,12 +308,14 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
           sourceCode: sourceSnippet,
         );
 
+        debugPrint('AST: Found $widgetName at line $startLine with nesting $_currentNestingLevel');
         widgets.add(widgetInfo);
       }
     }
 
+    // Always increment nesting level and visit children
     _currentNestingLevel++;
-    super.visitInstanceCreationExpression(node);
+    node.visitChildren(this);
     _currentNestingLevel--;
   }
 
@@ -314,6 +333,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
         final properties = _extractPropertiesFromMethodInvocation(node);
         final sourceSnippet = _getSourceSnippet(node.offset, node.end);
 
+        debugPrint('AST: Found method $methodName at line $startLine with nesting $_currentNestingLevel');
         widgets.add(_WidgetInfo(
           name: methodName,
           line: startLine,
@@ -337,6 +357,7 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
           final properties = _extractPropertiesFromMethodInvocation(node);
           final sourceSnippet = _getSourceSnippet(node.offset, node.end);
 
+          debugPrint('AST: Found $widgetName at line $startLine with nesting $_currentNestingLevel');
           widgets.add(_WidgetInfo(
             name: widgetName,
             line: startLine,
@@ -350,7 +371,10 @@ class _WidgetExtractorVisitor extends RecursiveAstVisitor<void> {
       }
     }
 
-    super.visitMethodInvocation(node);
+    // Always visit children with incremented nesting
+    _currentNestingLevel++;
+    node.visitChildren(this);
+    _currentNestingLevel--;
   }
 
   Map<String, dynamic> _extractProperties(InstanceCreationExpression node) {
