@@ -491,6 +491,66 @@ class ApiClient {
   }
 
   // ============================================
+  // Upload APIs
+  // ============================================
+
+  /// Upload a zip file containing a Flutter project
+  Future<Map<String, dynamic>> uploadProjectZip(List<int> zipBytes, String filename, {String? projectName}) async {
+    final uri = Uri.parse('$baseUrl/api/upload/zip');
+
+    // Create multipart request
+    final request = http.MultipartRequest('POST', uri);
+    request.files.add(http.MultipartFile.fromBytes(
+      'file',
+      zipBytes,
+      filename: filename,
+    ));
+    if (projectName != null) {
+      request.fields['projectName'] = projectName;
+    }
+
+    final streamedResponse = await _httpClient.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      final error = response.body.isNotEmpty
+          ? (jsonDecode(response.body)['error'] ?? 'Upload failed')
+          : 'Upload failed with status ${response.statusCode}';
+      throw ApiException(error.toString());
+    }
+  }
+
+  // ============================================
+  // Preview APIs
+  // ============================================
+
+  /// Build and start preview for a project
+  Future<Map<String, dynamic>> buildPreview(String projectPath, {String? projectId}) {
+    return post('/api/preview/build', body: {
+      'projectPath': projectPath,
+      if (projectId != null) 'projectId': projectId,
+    });
+  }
+
+  /// Get preview status
+  Future<Map<String, dynamic>> getPreviewStatus(String projectId) {
+    return get('/api/preview/status/$projectId');
+  }
+
+  /// Stop preview
+  Future<void> stopPreview(String projectId) async {
+    await post('/api/preview/stop/$projectId');
+  }
+
+  /// List all active previews
+  Future<List<Map<String, dynamic>>> listPreviews() async {
+    final response = await get('/api/preview/list');
+    return (response['previews'] as List).cast<Map<String, dynamic>>();
+  }
+
+  // ============================================
   // Health Check
   // ============================================
 

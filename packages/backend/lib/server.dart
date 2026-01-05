@@ -10,6 +10,8 @@ import 'handlers/terminal_handler.dart';
 import 'handlers/git_handler.dart';
 import 'handlers/project_handler.dart';
 import 'handlers/config_handler.dart';
+import 'handlers/upload_handler.dart';
+import 'handlers/preview_handler.dart';
 import 'websocket/terminal_websocket.dart';
 import 'services/terminal_service_impl.dart';
 import 'services/project_manager_impl.dart';
@@ -27,6 +29,8 @@ class VisualAppBuilderServer {
   late ConfigServiceImpl _configService;
   late GitServiceImpl _gitService;
   late TerminalWebSocket _terminalWebSocket;
+  late UploadHandler _uploadHandler;
+  late PreviewHandler _previewHandler;
 
   VisualAppBuilderServer({
     this.port = 8080,
@@ -50,6 +54,8 @@ class VisualAppBuilderServer {
     final gitHandler = GitHandler(_gitService);
     final projectHandler = ProjectHandler(_projectManager);
     final configHandler = ConfigHandler(_configService);
+    _uploadHandler = UploadHandler(_projectManager);
+    _previewHandler = PreviewHandler();
 
     // API routes
     router.mount('/api/files', filesHandler.router.call);
@@ -57,6 +63,8 @@ class VisualAppBuilderServer {
     router.mount('/api/git', gitHandler.router.call);
     router.mount('/api/projects', projectHandler.router.call);
     router.mount('/api/config', configHandler.router.call);
+    router.mount('/api/upload', _uploadHandler.router.call);
+    router.mount('/api/preview', _previewHandler.router.call);
 
     // WebSocket route for terminal streaming
     router.get('/ws/terminal', _terminalWebSocket.handler);
@@ -94,6 +102,7 @@ class VisualAppBuilderServer {
   Future<void> stop() async {
     _terminalService.dispose();
     _terminalWebSocket.dispose();
+    _previewHandler.dispose();
     await _server?.close(force: true);
   }
 
